@@ -3,5 +3,6 @@ test-fixtures/
 tsconfig.json
 .git/
 node_modules/
+scripts/
 CLAUDE.md
 .claude/
