@@ -136,6 +136,22 @@ Every rule has a reason. Do not remove or weaken any of these.
 
 13. **Every tool declares annotations** — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`. These enable MCP clients to make informed decisions about auto-approval and confirmation prompts.
 
+14. **`@pdfme/pdf-lib` ESM Import Pattern** — The package's `exports` field maps `import.node` to a CJS build, so Node.js cannot resolve named ESM imports at runtime. Use this dual-import pattern:
+
+```typescript
+import type { PDFDocument } from "@pdfme/pdf-lib";  // compile-time types only
+import pdfLib from "@pdfme/pdf-lib";                 // runtime default import
+
+// Access static methods via the default import:
+pdfLib.PDFDocument.load(data)   // not PDFDocument.load()
+pdfLib.PDFDocument.create()     // not PDFDocument.create()
+
+// Use the type import for annotations:
+function example(pdfDoc: PDFDocument): void {}
+```
+
+See `src/services/pdf-writer.ts` for the canonical example. All files that import from `@pdfme/pdf-lib` must follow this pattern.
+
 ## 6. Tools Reference
 
 | Tool | File | Library | Type | Description |
