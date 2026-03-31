@@ -1,0 +1,7 @@
+src/
+test-fixtures/
+tsconfig.json
+.git/
+node_modules/
+CLAUDE.md
+.claude/
