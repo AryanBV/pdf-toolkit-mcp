@@ -1,6 +1,9 @@
 # Claude Code
 .claude/
 
+# Test fixtures (generated, not committed)
+test-fixtures/
+
 # Logs
 logs
 *.log
