@@ -1,2 +1,3 @@
-// TODO: M3 — pdf_create, pdf_fill_form, pdf_embed_image
-export {};
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+export function registerCreateTools(server: McpServer): void {}

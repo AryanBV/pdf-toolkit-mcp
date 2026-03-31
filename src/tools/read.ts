@@ -1,2 +1,3 @@
-// TODO: M2 — pdf_extract_text, pdf_get_metadata, pdf_count_pages
-export {};
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+
+export function registerReadTools(server: McpServer): void {}
