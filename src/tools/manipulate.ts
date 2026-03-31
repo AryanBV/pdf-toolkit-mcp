@@ -15,7 +15,7 @@ import {
   parsePageRange,
 } from "../utils/validation.js";
 import { toolError, toolSuccess } from "../utils/errors.js";
-import { MAX_MERGE_FILES } from "../constants.js";
+import { MAX_MERGE_FILES, MAX_PAGE_WARNING } from "../constants.js";
 
 export function registerManipulateTools(server: McpServer): void {
   // ── pdf_merge ────────────────────────────────────────────────────────
@@ -27,12 +27,13 @@ export function registerManipulateTools(server: McpServer): void {
       inputSchema: z
         .object({
           filePaths: z
-            .array(z.string())
+            .array(z.string().max(4096))
             .min(2)
             .max(MAX_MERGE_FILES)
             .describe("Array of absolute paths to PDF files to merge, in order"),
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the merged output PDF"),
         })
         .strict(),
@@ -77,6 +78,12 @@ export function registerManipulateTools(server: McpServer): void {
           totalPages += copiedPages.length;
         }
 
+        if (totalPages > MAX_PAGE_WARNING) {
+          warnings.push(
+            `Warning: merged document has ${totalPages.toLocaleString()} pages, which may be slow to process.`
+          );
+        }
+
         await savePdf(mergedDoc, resolvedOutput);
 
         return toolSuccess({
@@ -101,14 +108,16 @@ export function registerManipulateTools(server: McpServer): void {
         "Extract specific pages from a PDF into a new file. Warning: form fields in the source PDF are not preserved — they appear visually but become non-interactive.",
       inputSchema: z
         .object({
-          filePath: z.string().describe("Absolute path to the source PDF file"),
+          filePath: z.string().max(4096).describe("Absolute path to the source PDF file"),
           pages: z
             .string()
+            .max(256)
             .describe(
               "Page range to extract, e.g. '1-5' or '1,3,5'"
             ),
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the output PDF"),
         })
         .strict(),
@@ -167,9 +176,10 @@ export function registerManipulateTools(server: McpServer): void {
         "Rotate pages in a PDF by 90, 180, or 270 degrees. Rotation is additive to any existing rotation. Rotates all pages if no page range is specified.",
       inputSchema: z
         .object({
-          filePath: z.string().describe("Absolute path to the source PDF file"),
+          filePath: z.string().max(4096).describe("Absolute path to the source PDF file"),
           pages: z
             .string()
+            .max(256)
             .optional()
             .describe(
               "Page range to rotate, e.g. '1-5' or '1,3,5'. Omit to rotate all pages."
@@ -179,6 +189,7 @@ export function registerManipulateTools(server: McpServer): void {
             .describe("Rotation angle: 90, 180, or 270 degrees clockwise"),
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the rotated output PDF"),
         })
         .strict(),

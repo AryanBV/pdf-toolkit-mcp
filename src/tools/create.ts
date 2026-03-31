@@ -95,15 +95,18 @@ export function registerCreateTools(server: McpServer): void {
         .object({
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the output PDF file"),
           content: z
             .string()
+            .max(10_000_000)
             .describe(
               "Text content for the PDF. Use \\n for line breaks."
             ),
-          title: z.string().optional().describe("PDF document title metadata"),
+          title: z.string().max(1000).optional().describe("PDF document title metadata"),
           author: z
             .string()
+            .max(1000)
             .optional()
             .describe("PDF document author metadata"),
           pageSize: z
@@ -118,8 +121,10 @@ export function registerCreateTools(server: McpServer): void {
             .describe("Font size in points (6–72). Defaults to 12."),
           margin: z
             .number()
+            .min(0)
+            .max(500)
             .optional()
-            .describe("Page margin in points. Defaults to 50."),
+            .describe("Page margin in points (0–500). Defaults to 50."),
         })
         .strict(),
       annotations: {
@@ -208,6 +213,7 @@ export function registerCreateTools(server: McpServer): void {
         .object({
           filePath: z
             .string()
+            .max(4096)
             .describe("Absolute path to the PDF file with form fields"),
           fields: z
             .record(z.union([z.string(), z.boolean()]))
@@ -216,6 +222,7 @@ export function registerCreateTools(server: McpServer): void {
             ),
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the filled output PDF"),
           flatten: z
             .boolean()
@@ -225,6 +232,7 @@ export function registerCreateTools(server: McpServer): void {
             ),
           fontPath: z
             .string()
+            .max(4096)
             .optional()
             .describe(
               "Absolute path to a .ttf/.otf font file for non-Latin character support."
@@ -358,13 +366,16 @@ export function registerCreateTools(server: McpServer): void {
         .object({
           filePath: z
             .string()
+            .max(4096)
             .describe("Absolute path to the source PDF file"),
-          text: z.string().describe("Watermark text to overlay on pages"),
+          text: z.string().max(1000).describe("Watermark text to overlay on pages"),
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the watermarked output PDF"),
           pages: z
             .string()
+            .max(256)
             .optional()
             .describe(
               "Page range, e.g. '1-5' or '1,3,5'. Omit to watermark all pages."
@@ -387,9 +398,11 @@ export function registerCreateTools(server: McpServer): void {
             .describe("Watermark color. Defaults to gray."),
           rotation: z
             .number()
+            .min(0)
+            .max(360)
             .optional()
             .describe(
-              "Watermark rotation in degrees. Defaults to 45 (diagonal)."
+              "Watermark rotation in degrees (0–360). Defaults to 45 (diagonal)."
             ),
         })
         .strict(),
@@ -475,9 +488,11 @@ export function registerCreateTools(server: McpServer): void {
         .object({
           filePath: z
             .string()
+            .max(4096)
             .describe("Absolute path to the source PDF file"),
           imagePath: z
             .string()
+            .max(4096)
             .describe("Absolute path to the PNG or JPEG image file"),
           page: z
             .number()
@@ -506,6 +521,7 @@ export function registerCreateTools(server: McpServer): void {
             ),
           outputPath: z
             .string()
+            .max(4096)
             .describe("Absolute path for the output PDF"),
         })
         .strict(),

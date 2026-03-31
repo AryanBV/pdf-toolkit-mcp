@@ -1,7 +1,18 @@
 import { resolve, extname, dirname } from "node:path";
+import { homedir } from "node:os";
 import { access, stat } from "node:fs/promises";
-import { MAX_FILE_SIZE_MB } from "../constants.js";
+import { MAX_FILE_SIZE_MB, MAX_PAGE_NUMBER } from "../constants.js";
 import type { ParsedPageRange } from "../types.js";
+
+const HOME_DIR = homedir();
+
+function warnIfOutsideHome(resolved: string): void {
+  if (!resolved.startsWith(HOME_DIR)) {
+    console.error(
+      `[pdf-toolkit-mcp] Warning: path outside home directory: ${resolved}`
+    );
+  }
+}
 
 export async function validatePdfPath(filePath: string): Promise<string> {
   const resolved = resolve(filePath);
@@ -20,6 +31,7 @@ export async function validatePdfPath(filePath: string): Promise<string> {
     );
   }
 
+  warnIfOutsideHome(resolved);
   return resolved;
 }
 
@@ -49,6 +61,7 @@ export async function validateOutputPath(
     );
   }
 
+  warnIfOutsideHome(resolved);
   return resolved;
 }
 
@@ -101,6 +114,12 @@ export function parsePageRange(
         );
       }
 
+      if (start > MAX_PAGE_NUMBER || end > MAX_PAGE_NUMBER) {
+        throw new Error(
+          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`
+        );
+      }
+
       if (start > end) {
         throw new Error(
           `Invalid range: "${segment}". Start page must not exceed end page.`
@@ -128,6 +147,12 @@ export function parsePageRange(
       if (page < 1) {
         throw new Error(
           `Page numbers must be at least 1, got ${page}.`
+        );
+      }
+
+      if (page > MAX_PAGE_NUMBER) {
+        throw new Error(
+          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`
         );
       }
 

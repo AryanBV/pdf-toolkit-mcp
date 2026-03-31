@@ -21,9 +21,10 @@ export function registerReadTools(server: McpServer): void {
         "Extract text content from a PDF file. Returns first 10 pages by default to avoid exceeding LLM context limits. Use the 'pages' parameter for specific pages.",
       inputSchema: z
         .object({
-          filePath: z.string().describe("Absolute path to the PDF file"),
+          filePath: z.string().max(4096).describe("Absolute path to the PDF file"),
           pages: z
             .string()
+            .max(256)
             .optional()
             .describe(
               "Page range, e.g. '1-5' or '1,3,5'. Defaults to first 10 pages."
@@ -85,7 +86,7 @@ export function registerReadTools(server: McpServer): void {
         "Get metadata from a PDF file including title, author, subject, page count, creation/modification dates, and producer information.",
       inputSchema: z
         .object({
-          filePath: z.string().describe("Absolute path to the PDF file"),
+          filePath: z.string().max(4096).describe("Absolute path to the PDF file"),
         })
         .strict(),
       annotations: {
@@ -131,7 +132,7 @@ export function registerReadTools(server: McpServer): void {
         "List all form fields in a PDF with their names, types, current values, and required status. Returns hasForm: false for PDFs without forms.",
       inputSchema: z
         .object({
-          filePath: z.string().describe("Absolute path to the PDF file"),
+          filePath: z.string().max(4096).describe("Absolute path to the PDF file"),
         })
         .strict(),
       annotations: {
