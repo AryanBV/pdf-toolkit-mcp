@@ -31,7 +31,7 @@ type HtmlToPdfmakeFn = (
 ) => unknown[];
 
 // Loose doc definition that works with html-to-pdfmake's dynamic output
-interface PdfDocDefinition {
+export interface PdfDocDefinition {
   content: unknown;
   pageSize?: string;
   styles?: Record<string, Record<string, unknown>>;

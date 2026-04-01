@@ -18,7 +18,10 @@ import {
 } from "../utils/validation.js";
 import { toolError, toolSuccess } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
-import { createFromMarkdown } from "../services/pdf-creator.js";
+import { createFromMarkdown, renderDocDefinition } from "../services/pdf-creator.js";
+import type { PdfDocDefinition } from "../services/pdf-creator.js";
+import { templateRegistry } from "../templates/index.js";
+import type { TemplateName } from "../types.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -676,6 +679,72 @@ export function registerCreateTools(server: McpServer): void {
 
         return toolSuccess({
           outputPath: result.outputPath,
+          pageCount: result.pageCount,
+          pageSize: pageSize ?? "A4",
+          fileSize: result.fileSize,
+        });
+      } catch (error) {
+        return toolError(
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+  );
+
+  // ── pdf_create_from_template ──────────────────────────────────────────
+  server.registerTool(
+    "pdf_create_from_template",
+    {
+      description:
+        "Create a PDF from a named template (invoice, report, or letter). Pass structured data matching the template's expected fields.",
+      inputSchema: z
+        .object({
+          templateName: z
+            .enum(["invoice", "report", "letter"])
+            .describe("Template to use: invoice, report, or letter"),
+          data: z
+            .record(z.unknown())
+            .describe(
+              "Template data. Invoice: companyName, clientName, invoiceNumber, items[{description, quantity, unitPrice}], taxRate, dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName."
+            ),
+          outputPath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path for the output PDF file"),
+          pageSize: z
+            .enum(["A4", "LETTER", "LEGAL"])
+            .optional()
+            .describe("Page size. Defaults to A4."),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ templateName, data, outputPath, pageSize }) => {
+      try {
+        const resolvedOutput = await validateOutputPath(outputPath);
+
+        const builder = templateRegistry[templateName as TemplateName];
+        if (!builder) {
+          return toolError(
+            `Unknown template: ${templateName}. Available templates: invoice, report, letter.`
+          );
+        }
+
+        const docDefinition = builder(data as Record<string, unknown>) as unknown as PdfDocDefinition;
+        if (pageSize) {
+          docDefinition.pageSize = pageSize;
+        }
+
+        const result = await renderDocDefinition(docDefinition, resolvedOutput);
+
+        return toolSuccess({
+          outputPath: result.outputPath,
+          template: templateName,
           pageCount: result.pageCount,
           pageSize: pageSize ?? "A4",
           fileSize: result.fileSize,

@@ -29,3 +29,5 @@ export interface FormField {
 }
 
 export type ParsedPageRange = number[];
+
+export type TemplateName = "invoice" | "report" | "letter";
