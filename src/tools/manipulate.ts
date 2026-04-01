@@ -15,6 +15,7 @@ import {
   parsePageRange,
 } from "../utils/validation.js";
 import { toolError, toolSuccess } from "../utils/errors.js";
+import { getFileSize } from "../utils/file-utils.js";
 import { MAX_MERGE_FILES, MAX_PAGE_WARNING } from "../constants.js";
 
 export function registerManipulateTools(server: McpServer): void {
@@ -85,12 +86,14 @@ export function registerManipulateTools(server: McpServer): void {
         }
 
         await savePdf(mergedDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
           outputPath: resolvedOutput,
           totalPages,
           sourceFiles: resolvedPaths.length,
           warnings,
+          fileSize,
         });
       } catch (error) {
         return toolError(
@@ -153,12 +156,14 @@ export function registerManipulateTools(server: McpServer): void {
         }
 
         await savePdf(newDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
           outputPath: resolvedOutput,
           extractedPages: pages,
           totalSourcePages,
           warnings,
+          fileSize,
         });
       } catch (error) {
         return toolError(
@@ -224,6 +229,7 @@ export function registerManipulateTools(server: McpServer): void {
         }
 
         await savePdf(pdfDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         const rotatedLabel = pages ?? (totalPages === 1 ? "1" : `1-${totalPages}`);
 
@@ -231,6 +237,7 @@ export function registerManipulateTools(server: McpServer): void {
           outputPath: resolvedOutput,
           rotatedPages: rotatedLabel,
           degrees,
+          fileSize,
         });
       } catch (error) {
         return toolError(

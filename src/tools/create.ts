@@ -17,6 +17,7 @@ import {
   toUint8Array,
 } from "../utils/validation.js";
 import { toolError, toolSuccess } from "../utils/errors.js";
+import { getFileSize } from "../utils/file-utils.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -99,6 +100,7 @@ export function registerCreateTools(server: McpServer): void {
             .describe("Absolute path for the output PDF file"),
           content: z
             .string()
+            .min(1)
             .max(10_000_000)
             .describe(
               "Text content for the PDF. Use \\n for line breaks."
@@ -152,19 +154,11 @@ export function registerCreateTools(server: McpServer): void {
         const font = await pdfDoc.embedFont(pdfLib.StandardFonts.Helvetica);
         const maxWidth = pageWidth - 2 * marg;
 
-        // Empty content → single blank page
-        if (!content) {
-          pdfDoc.addPage([pageWidth, pageHeight]);
-          await savePdf(pdfDoc, resolvedOutput);
-          return toolSuccess({
-            outputPath: resolvedOutput,
-            pageCount: 1,
-            title: title ?? null,
-            pageSize: size,
-          });
-        }
+        // Parse escape sequences (LLMs send literal \n and \t)
+        let textContent = content.replace(/\\n/g, "\n");
+        textContent = textContent.replace(/\\t/g, "\t");
 
-        const wrappedLines = wrapText(content, font, fSize, maxWidth);
+        const wrappedLines = wrapText(textContent, font, fSize, maxWidth);
 
         let page = pdfDoc.addPage([pageWidth, pageHeight]);
         let currentY = pageHeight - marg;
@@ -188,12 +182,14 @@ export function registerCreateTools(server: McpServer): void {
         }
 
         await savePdf(pdfDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
           outputPath: resolvedOutput,
           pageCount: pdfDoc.getPageCount(),
           title: title ?? null,
           pageSize: size,
+          fileSize,
         });
       } catch (error) {
         return toolError(
@@ -342,11 +338,13 @@ export function registerCreateTools(server: McpServer): void {
         }
 
         await savePdf(pdfDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
           outputPath: resolvedOutput,
           filledFields: filledCount,
           flattened: flatten ?? false,
+          fileSize,
         });
       } catch (error) {
         return toolError(
@@ -461,6 +459,7 @@ export function registerCreateTools(server: McpServer): void {
         }
 
         await savePdf(pdfDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         const watermarkedLabel =
           pages ?? (totalPages === 1 ? "1" : `1-${totalPages}`);
@@ -469,6 +468,7 @@ export function registerCreateTools(server: McpServer): void {
           outputPath: resolvedOutput,
           watermarkedPages: watermarkedLabel,
           text,
+          fileSize,
         });
       } catch (error) {
         return toolError(
@@ -591,12 +591,14 @@ export function registerCreateTools(server: McpServer): void {
         });
 
         await savePdf(pdfDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
           outputPath: resolvedOutput,
           page,
           position: { x, y },
           dimensions: { width: drawWidth, height: drawHeight },
+          fileSize,
         });
       } catch (error) {
         return toolError(

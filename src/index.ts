@@ -8,7 +8,7 @@ import { registerCreateTools } from "./tools/create.js";
 
 const server = new McpServer({
   name: "pdf-toolkit-mcp",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 registerReadTools(server);

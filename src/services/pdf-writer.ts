@@ -17,6 +17,7 @@ export async function savePdf(
   pdfDoc: PDFDocument,
   outputPath: string
 ): Promise<string> {
+  pdfDoc.setProducer("@aryanbv/pdf-toolkit-mcp");
   const pdfBytes = await pdfDoc.save();
   await writeFile(outputPath, pdfBytes);
   return outputPath;

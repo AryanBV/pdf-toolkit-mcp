@@ -1,6 +1,6 @@
 {
   "name": "@aryanbv/pdf-toolkit-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server for PDF manipulation — create, merge, split, fill forms, watermark, and more. Zero-config, TypeScript-native.",
   "type": "module",
   "bin": {
@@ -35,14 +35,22 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.28.0",
+    "@bwip-js/node": "^4.8.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@pdfme/pdf-lib": "^5.5.10",
+    "@pdfsmaller/pdf-encrypt-lite": "^1.0.2",
     "fontkit": "^2.0.0",
+    "html-to-pdfmake": "^2.5.33",
+    "jsdom": "^27.0.1",
+    "marked": "^17.0.5",
+    "pdfmake": "^0.3.7",
     "unpdf": "^1.4.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^28.0.1",
     "@types/node": "^22.0.0",
+    "@types/pdfmake": "^0.3.2",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   }
