@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerReadTools } from "./tools/read.js";
 import { registerManipulateTools } from "./tools/manipulate.js";
 import { registerCreateTools } from "./tools/create.js";
+import { registerPrompts } from "./prompts/index.js";
 
 const server = new McpServer({
   name: "pdf-toolkit-mcp",
@@ -14,6 +15,7 @@ const server = new McpServer({
 registerReadTools(server);
 registerManipulateTools(server);
 registerCreateTools(server);
+registerPrompts(server);
 
 const transport = new StdioServerTransport();
 

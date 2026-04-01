@@ -1,5 +1,5 @@
 /**
- * Automated test harness for all 10 PDF toolkit MCP tools.
+ * Automated test harness for all 16 PDF toolkit MCP tools.
  * Tests handler functions directly via a mock McpServer.
  * Run: npm run test
  */
@@ -477,6 +477,310 @@ async function runAllTests(): Promise<void> {
     assert(await fileExists(embedPath), "embed output file should exist");
   });
   await cleanup();
+
+  // ──────────── pdf_create_from_markdown ────────────
+
+  const markdownPath = join(FIXTURES, "test-markdown.pdf");
+
+  await runTest("#31 pdf_create_from_markdown — happy path", async () => {
+    cleanupFiles.push(markdownPath);
+    const res = await callTool("pdf_create_from_markdown", {
+      markdown: "# Hello World\n\nThis is a **bold** and *italic* test paragraph.",
+      outputPath: markdownPath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert((data.pageCount as number) >= 1, `expected pageCount >= 1, got ${data.pageCount}`);
+    assert(await fileExists(markdownPath), "markdown PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#32 pdf_create_from_markdown — table", async () => {
+    cleanupFiles.push(markdownPath);
+    const res = await callTool("pdf_create_from_markdown", {
+      markdown: "| Name | Age |\n|---|---|\n| Aryan | 23 |\n| Test | 30 |",
+      outputPath: markdownPath,
+    });
+    assert(!res.isError, "should not be an error");
+    assert(await fileExists(markdownPath), "table PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#33 pdf_create_from_markdown — long content spans multiple pages", async () => {
+    cleanupFiles.push(markdownPath);
+    const longMd = Array.from({ length: 60 }, (_, i) =>
+      `## Section ${i + 1}\n\nThis is paragraph ${i + 1} with enough text to consume space progressively across multiple pages.\n`
+    ).join("\n");
+    const res = await callTool("pdf_create_from_markdown", {
+      markdown: longMd,
+      outputPath: markdownPath,
+    });
+    const data = parseResponseData(res);
+    assert((data.pageCount as number) > 1, `expected pageCount > 1, got ${data.pageCount}`);
+  });
+  await cleanup();
+
+  await runTest("#34 pdf_create_from_markdown — pageNumbers option", async () => {
+    cleanupFiles.push(markdownPath);
+    const res = await callTool("pdf_create_from_markdown", {
+      markdown: "# Report\n\nContent here.",
+      outputPath: markdownPath,
+      pageNumbers: true,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(typeof data.pageCount === "number", "should have pageCount");
+  });
+  await cleanup();
+
+  await runTest("#35 pdf_create_from_markdown — error: empty string", async () => {
+    expectZodError("pdf_create_from_markdown", {
+      markdown: "",
+      outputPath: markdownPath,
+    });
+  });
+
+  // ──────────── pdf_create_from_template ────────────
+
+  const templatePath = join(FIXTURES, "test-template.pdf");
+
+  await runTest("#36 pdf_create_from_template — invoice", async () => {
+    cleanupFiles.push(templatePath);
+    const res = await callTool("pdf_create_from_template", {
+      templateName: "invoice",
+      data: {
+        companyName: "Test Corp",
+        clientName: "Client Inc",
+        invoiceNumber: "INV-TEST-001",
+        items: [{ description: "Consulting", quantity: 10, unitPrice: 150 }],
+      },
+      outputPath: templatePath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.template === "invoice", `expected template='invoice', got '${data.template}'`);
+    assert(await fileExists(templatePath), "invoice PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#37 pdf_create_from_template — report", async () => {
+    cleanupFiles.push(templatePath);
+    const res = await callTool("pdf_create_from_template", {
+      templateName: "report",
+      data: {
+        title: "Q1 Report",
+        author: "Aryan",
+        sections: [{ heading: "Revenue", body: "Revenue grew 23% YoY." }],
+      },
+      outputPath: templatePath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.template === "report", `expected template='report', got '${data.template}'`);
+  });
+  await cleanup();
+
+  await runTest("#38 pdf_create_from_template — letter", async () => {
+    cleanupFiles.push(templatePath);
+    const res = await callTool("pdf_create_from_template", {
+      templateName: "letter",
+      data: {
+        senderName: "Aryan Salian",
+        recipientName: "HR Manager",
+        subject: "Application",
+        body: "I am writing to express my interest.",
+      },
+      outputPath: templatePath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.template === "letter", `expected template='letter', got '${data.template}'`);
+  });
+  await cleanup();
+
+  await runTest("#39 pdf_create_from_template — error: invalid template name", async () => {
+    expectZodError("pdf_create_from_template", {
+      templateName: "nonexistent",
+      data: {},
+      outputPath: templatePath,
+    });
+  });
+
+  // ──────────── pdf_encrypt ────────────
+
+  const encryptedPath = join(FIXTURES, "test-encrypted.pdf");
+
+  await runTest("#40 pdf_encrypt — happy path", async () => {
+    cleanupFiles.push(encryptedPath);
+    const res = await callTool("pdf_encrypt", {
+      filePath: SAMPLE,
+      outputPath: encryptedPath,
+      userPassword: "test123",
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.encrypted === true, `expected encrypted=true, got ${data.encrypted}`);
+    assert(typeof data.fileSize === "string", "should have fileSize");
+    assert(await fileExists(encryptedPath), "encrypted PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#41 pdf_encrypt — different user and owner passwords", async () => {
+    cleanupFiles.push(encryptedPath);
+    const res = await callTool("pdf_encrypt", {
+      filePath: SAMPLE,
+      outputPath: encryptedPath,
+      userPassword: "user123",
+      ownerPassword: "owner456",
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.encrypted === true, "should be encrypted");
+  });
+  await cleanup();
+
+  await runTest("#42 pdf_encrypt — error: non-existent source", async () => {
+    const res = await callTool("pdf_encrypt", {
+      filePath: "/nonexistent/source.pdf",
+      outputPath: encryptedPath,
+      userPassword: "test",
+    });
+    assert(res.isError === true, "should be an error");
+  });
+
+  // ──────────── pdf_add_page_numbers ────────────
+
+  const pageNumPath = join(FIXTURES, "test-pagenums.pdf");
+
+  await runTest("#43 pdf_add_page_numbers — default position", async () => {
+    cleanupFiles.push(pageNumPath);
+    const res = await callTool("pdf_add_page_numbers", {
+      filePath: SAMPLE,
+      outputPath: pageNumPath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.totalPages === 3, `expected totalPages=3, got ${data.totalPages}`);
+    assert(await fileExists(pageNumPath), "page-numbered PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#44 pdf_add_page_numbers — bottom-right position", async () => {
+    cleanupFiles.push(pageNumPath);
+    const res = await callTool("pdf_add_page_numbers", {
+      filePath: SAMPLE,
+      outputPath: pageNumPath,
+      position: "bottom-right",
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.position === "bottom-right", `expected position='bottom-right', got '${data.position}'`);
+  });
+  await cleanup();
+
+  await runTest("#45 pdf_add_page_numbers — custom format '- X -'", async () => {
+    cleanupFiles.push(pageNumPath);
+    const res = await callTool("pdf_add_page_numbers", {
+      filePath: SAMPLE,
+      outputPath: pageNumPath,
+      format: "- X -",
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.format === "- X -", `expected format='- X -', got '${data.format}'`);
+  });
+  await cleanup();
+
+  // ──────────── pdf_embed_qr_code ────────────
+
+  const qrPath = join(FIXTURES, "test-qr.pdf");
+
+  await runTest("#46 pdf_embed_qr_code — QR code", async () => {
+    cleanupFiles.push(qrPath);
+    const res = await callTool("pdf_embed_qr_code", {
+      filePath: SAMPLE,
+      content: "https://github.com/AryanBV/pdf-toolkit-mcp",
+      outputPath: qrPath,
+      page: 1,
+      x: 50,
+      y: 50,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.page === 1, `expected page=1, got ${data.page}`);
+    assert(await fileExists(qrPath), "QR PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#47 pdf_embed_qr_code — code128 barcode", async () => {
+    cleanupFiles.push(qrPath);
+    const res = await callTool("pdf_embed_qr_code", {
+      filePath: SAMPLE,
+      content: "PDF-TOOLKIT-001",
+      outputPath: qrPath,
+      page: 1,
+      x: 50,
+      y: 50,
+      type: "code128",
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.type === "code128", `expected type='code128', got '${data.type}'`);
+  });
+  await cleanup();
+
+  await runTest("#48 pdf_embed_qr_code — error: page out of range", async () => {
+    const res = await callTool("pdf_embed_qr_code", {
+      filePath: SAMPLE,
+      content: "test",
+      outputPath: qrPath,
+      page: 99,
+      x: 50,
+      y: 50,
+    });
+    assert(res.isError === true, "should be an error");
+  });
+
+  // ──────────── pdf_reorder_pages ────────────
+
+  const reorderPath = join(FIXTURES, "test-reorder.pdf");
+
+  await runTest("#49 pdf_reorder_pages — reverse order", async () => {
+    cleanupFiles.push(reorderPath);
+    const res = await callTool("pdf_reorder_pages", {
+      filePath: SAMPLE,
+      pageOrder: "3,2,1",
+      outputPath: reorderPath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    assert(data.totalPages === 3, `expected totalPages=3, got ${data.totalPages}`);
+    assert(await fileExists(reorderPath), "reordered PDF should exist");
+  });
+  await cleanup();
+
+  await runTest("#50 pdf_reorder_pages — duplicate pages", async () => {
+    cleanupFiles.push(reorderPath);
+    const res = await callTool("pdf_reorder_pages", {
+      filePath: SAMPLE,
+      pageOrder: "1,1,2",
+      outputPath: reorderPath,
+    });
+    const data = parseResponseData(res);
+    assert(!res.isError, "should not be an error");
+    const doc = await loadExistingPdf(reorderPath);
+    assert(doc.getPageCount() === 3, `expected 3 pages, got ${doc.getPageCount()}`);
+  });
+  await cleanup();
+
+  await runTest("#51 pdf_reorder_pages — error: page out of range", async () => {
+    const res = await callTool("pdf_reorder_pages", {
+      filePath: SAMPLE,
+      pageOrder: "1,2,99",
+      outputPath: reorderPath,
+    });
+    assert(res.isError === true, "should be an error");
+  });
 }
 
 // ── Main ────────────────────────────────────────────────────────────────

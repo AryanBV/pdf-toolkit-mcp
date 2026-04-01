@@ -1,7 +1,7 @@
 {
   "name": "@aryanbv/pdf-toolkit-mcp",
   "version": "0.2.0",
-  "description": "MCP server for PDF manipulation — create, merge, split, fill forms, watermark, and more. Zero-config, TypeScript-native.",
+  "description": "MCP server for PDF manipulation — 16 tools: create from Markdown, templates, merge, split, encrypt, QR codes, fill forms, watermark. Zero-config, TypeScript-native.",
   "type": "module",
   "bin": {
     "pdf-toolkit-mcp": "dist/index.js"
@@ -28,7 +28,13 @@
     "model-context-protocol",
     "claude",
     "typescript",
-    "ai-tools"
+    "ai-tools",
+    "markdown",
+    "pdfmake",
+    "template",
+    "encrypt",
+    "qr-code",
+    "barcode"
   ],
   "license": "MIT",
   "engines": {
