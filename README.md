@@ -40,8 +40,6 @@ Revenue grew **23% year-over-year**, driven by enterprise expansion.
 2. Reduced churn to 3.1%
 3. Launched self-serve tier
 
----
-
 ```
 
 This produces a multi-page PDF with formatted headings, styled tables, numbered lists, bold/italic text, and page numbers — all from a single tool call.
