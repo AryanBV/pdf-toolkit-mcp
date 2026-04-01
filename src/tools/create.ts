@@ -18,6 +18,7 @@ import {
 } from "../utils/validation.js";
 import { toolError, toolSuccess } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
+import { createFromMarkdown } from "../services/pdf-creator.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -599,6 +600,85 @@ export function registerCreateTools(server: McpServer): void {
           position: { x, y },
           dimensions: { width: drawWidth, height: drawHeight },
           fileSize,
+        });
+      } catch (error) {
+        return toolError(
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
+  );
+
+  // ── pdf_create_from_markdown ──────────────────────────────────────────
+  server.registerTool(
+    "pdf_create_from_markdown",
+    {
+      description:
+        "Create a rich PDF from Markdown content. Supports headings, bold, italic, tables, lists, and code blocks. Uses Roboto font.",
+      inputSchema: z
+        .object({
+          markdown: z
+            .string()
+            .min(1)
+            .max(10_000_000)
+            .describe("Markdown content to render as PDF"),
+          outputPath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path for the output PDF file"),
+          pageSize: z
+            .enum(["A4", "LETTER", "LEGAL"])
+            .optional()
+            .describe("Page size. Defaults to A4."),
+          title: z.string().max(1000).optional().describe("PDF document title metadata"),
+          author: z
+            .string()
+            .max(1000)
+            .optional()
+            .describe("PDF document author metadata"),
+          pageNumbers: z
+            .boolean()
+            .optional()
+            .describe("Add page numbers to footer. Defaults to false."),
+          headerText: z
+            .string()
+            .max(500)
+            .optional()
+            .describe("Text to display in the page header"),
+          footerText: z
+            .string()
+            .max(500)
+            .optional()
+            .describe("Text to display in the page footer (above page numbers if both enabled)"),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ markdown, outputPath, pageSize, title, author, pageNumbers, headerText, footerText }) => {
+      try {
+        const resolvedOutput = await validateOutputPath(outputPath);
+
+        const result = await createFromMarkdown({
+          markdown,
+          outputPath: resolvedOutput,
+          pageSize: pageSize as "A4" | "LETTER" | "LEGAL" | undefined,
+          title,
+          author,
+          pageNumbers,
+          headerText,
+          footerText,
+        });
+
+        return toolSuccess({
+          outputPath: result.outputPath,
+          pageCount: result.pageCount,
+          pageSize: pageSize ?? "A4",
+          fileSize: result.fileSize,
         });
       } catch (error) {
         return toolError(
