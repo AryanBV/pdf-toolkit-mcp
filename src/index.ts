@@ -9,7 +9,7 @@ import { registerPrompts } from "./prompts/index.js";
 
 const server = new McpServer({
   name: "pdf-toolkit-mcp",
-  version: "0.2.0",
+  version: "0.2.2",
 });
 
 registerReadTools(server);

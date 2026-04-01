@@ -1,3 +1,9 @@
+# MCP Publisher
+mcp-publisher.exe
+mcp-publisher_windows_amd64.tar.gz
+.mcpregistry_github_token
+.mcpregistry_registry_token
+
 # Claude Code
 .claude/
 
