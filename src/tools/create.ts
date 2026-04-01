@@ -13,6 +13,8 @@ import {
   validatePdfPath,
   validateOutputPath,
   validateFileSize,
+  validateFontPath,
+  validateImagePath,
   parsePageRange,
   toUint8Array,
 } from "../utils/validation.js";
@@ -248,6 +250,11 @@ export function registerCreateTools(server: McpServer): void {
     },
     async ({ filePath, fields, outputPath, flatten, fontPath }) => {
       try {
+        const BLOCKED_KEYS = ['__proto__', 'constructor', 'prototype'];
+        if (Object.keys(fields).some(k => BLOCKED_KEYS.includes(k))) {
+          return toolError('Input contains prohibited key names.');
+        }
+
         const resolvedPath = await validatePdfPath(filePath);
         await validateFileSize(resolvedPath);
         const resolvedOutput = await validateOutputPath(outputPath, filePath);
@@ -290,7 +297,8 @@ export function registerCreateTools(server: McpServer): void {
         // Load custom font if fontPath provided
         let customFont: PDFFont | undefined;
         if (fontPath) {
-          const resolvedFontPath = resolve(fontPath);
+          const resolvedFontPath = await validateFontPath(fontPath);
+          await validateFileSize(resolvedFontPath);
           const fontBuffer = await readFile(resolvedFontPath);
           const fontBytes = toUint8Array(fontBuffer);
 
@@ -542,15 +550,9 @@ export function registerCreateTools(server: McpServer): void {
         await validateFileSize(resolvedPath);
         const resolvedOutput = await validateOutputPath(outputPath, filePath);
 
-        // Detect image format from extension
-        const ext = extname(imagePath).toLowerCase();
-        if (![".jpg", ".jpeg", ".png"].includes(ext)) {
-          return toolError(
-            "Unsupported image format. Only JPEG (.jpg, .jpeg) and PNG (.png) files are supported."
-          );
-        }
-
-        const resolvedImagePath = resolve(imagePath);
+        const resolvedImagePath = await validateImagePath(imagePath);
+        await validateFileSize(resolvedImagePath);
+        const ext = extname(resolvedImagePath).toLowerCase();
         const imageBuffer = await readFile(resolvedImagePath);
         const imageBytes = toUint8Array(imageBuffer);
 
@@ -726,6 +728,11 @@ export function registerCreateTools(server: McpServer): void {
     },
     async ({ templateName, data, outputPath, pageSize }) => {
       try {
+        const BLOCKED_KEYS = ['__proto__', 'constructor', 'prototype'];
+        if (Object.keys(data).some(k => BLOCKED_KEYS.includes(k))) {
+          return toolError('Input contains prohibited key names.');
+        }
+
         const resolvedOutput = await validateOutputPath(outputPath);
 
         const builder = templateRegistry[templateName as TemplateName];

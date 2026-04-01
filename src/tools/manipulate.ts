@@ -617,6 +617,10 @@ export function registerManipulateTools(server: McpServer): void {
           indices.push(num - 1); // Convert to 0-indexed
         }
 
+        if (indices.length > 2000) {
+          return toolError('Page order exceeds maximum of 2000 output pages.');
+        }
+
         const warnings: string[] = [];
         const formCheck = checkForFormFields(sourceDoc);
         if (formCheck.hasFields) {

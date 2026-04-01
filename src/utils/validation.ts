@@ -1,18 +1,7 @@
 import { resolve, extname, dirname } from "node:path";
-import { homedir } from "node:os";
 import { access, stat } from "node:fs/promises";
 import { MAX_FILE_SIZE_MB, MAX_PAGE_NUMBER } from "../constants.js";
 import type { ParsedPageRange } from "../types.js";
-
-const HOME_DIR = homedir();
-
-function warnIfOutsideHome(resolved: string): void {
-  if (!resolved.startsWith(HOME_DIR)) {
-    console.error(
-      `[pdf-toolkit-mcp] Warning: path outside home directory: ${resolved}`
-    );
-  }
-}
 
 export async function validatePdfPath(filePath: string): Promise<string> {
   const resolved = resolve(filePath);
@@ -31,7 +20,6 @@ export async function validatePdfPath(filePath: string): Promise<string> {
     );
   }
 
-  warnIfOutsideHome(resolved);
   return resolved;
 }
 
@@ -61,7 +49,48 @@ export async function validateOutputPath(
     );
   }
 
-  warnIfOutsideHome(resolved);
+  return resolved;
+}
+
+export async function validateFontPath(filePath: string): Promise<string> {
+  const resolved = resolve(filePath);
+  const ext = extname(resolved).toLowerCase();
+
+  if (ext !== ".ttf" && ext !== ".otf") {
+    throw new Error(
+      `Not a font file: ${resolved}. File must have a .ttf or .otf extension.`
+    );
+  }
+
+  try {
+    await access(resolved);
+  } catch {
+    throw new Error(
+      `File not found: ${resolved}. Check the path and try again.`
+    );
+  }
+
+  return resolved;
+}
+
+export async function validateImagePath(filePath: string): Promise<string> {
+  const resolved = resolve(filePath);
+  const ext = extname(resolved).toLowerCase();
+
+  if (![".jpg", ".jpeg", ".png"].includes(ext)) {
+    throw new Error(
+      `Unsupported image format: ${resolved}. Only JPEG (.jpg, .jpeg) and PNG (.png) files are supported.`
+    );
+  }
+
+  try {
+    await access(resolved);
+  } catch {
+    throw new Error(
+      `File not found: ${resolved}. Check the path and try again.`
+    );
+  }
+
   return resolved;
 }
 
