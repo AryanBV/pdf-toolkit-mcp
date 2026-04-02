@@ -22,21 +22,29 @@
     "test": "npx tsx scripts/test-tools.ts"
   },
   "keywords": [
-    "mcp",
-    "mcp-server",
-    "pdf",
-    "pdf-lib",
-    "model-context-protocol",
-    "claude",
-    "typescript",
-    "ai-tools",
-    "markdown",
-    "pdfmake",
-    "template",
-    "encrypt",
-    "qr-code",
-    "barcode"
+  "mcp",
+  "mcp-server",
+  "pdf",
+  "pdf-lib",
+  "pdf-merge",
+  "pdf-split",
+  "pdf-create",
+  "pdf-rotate",
+  "pdf-encrypt",
+  "pdf-watermark",
+  "pdf-tools",
+  "fill-form",
+  "model-context-protocol",
+  "claude",
+  "typescript",
+  "ai-tools",
+  "markdown",
+  "pdfmake",
+  "template",
+  "qr-code",
+  "barcode"
   ],
+  
   "license": "MIT",
   "engines": {
     "node": ">=18"
