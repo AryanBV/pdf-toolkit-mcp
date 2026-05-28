@@ -9,8 +9,11 @@ import {
   loadExistingPdf,
   createNewPdf,
   savePdf,
-  checkForFormFields,
 } from "../services/pdf-writer.js";
+import {
+  copyPagesPreservingForms,
+  type FormCopyReport,
+} from "../services/pdf-page-engine.js";
 import { encryptPdf } from "../services/pdf-crypto.js";
 import { extractPdfText, getPdfPageCount } from "../services/pdf-reader.js";
 import {
@@ -29,13 +32,28 @@ import {
 import { getFileSize } from "../utils/file-utils.js";
 import { MAX_MERGE_FILES, MAX_PAGE_WARNING } from "../constants.js";
 
+/** Empty form report used as the seed for aggregation. */
+function emptyFormReport(): FormCopyReport {
+  return { preserved: 0, renamed: [], dropped: [] };
+}
+
+/** Merge a per-source form report into a running aggregate. */
+function accumulateFormReport(
+  total: FormCopyReport,
+  next: FormCopyReport,
+): void {
+  total.preserved += next.preserved;
+  total.renamed.push(...next.renamed);
+  total.dropped.push(...next.dropped);
+}
+
 export function registerManipulateTools(server: McpServer): void {
   // ── pdf_merge ────────────────────────────────────────────────────────
   server.registerTool(
     "pdf_merge",
     {
       description:
-        "Merge multiple PDF files into one. Warning: form fields in source PDFs are not preserved during merge — they appear visually but become non-interactive.",
+        "Merge multiple PDF files into one. AcroForm fields are preserved; fields whose names collide across inputs are auto-renamed (namespaced by source). Set flatten:true to bake field values into static content.",
       inputSchema: z
         .object({
           filePaths: z
@@ -49,6 +67,12 @@ export function registerManipulateTools(server: McpServer): void {
             .string()
             .max(4096)
             .describe("Absolute path for the merged output PDF"),
+          flatten: z
+            .boolean()
+            .optional()
+            .describe(
+              "Flatten the merged form: bake field values into static content and remove interactivity. Defaults to false.",
+            ),
         })
         .strict(),
       annotations: {
@@ -58,7 +82,7 @@ export function registerManipulateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ filePaths, outputPath }) => {
+    async ({ filePaths, outputPath, flatten }) => {
       try {
         const resolvedOutput = await validateOutputPath(outputPath);
 
@@ -71,25 +95,26 @@ export function registerManipulateTools(server: McpServer): void {
 
         const warnings: string[] = [];
         const mergedDoc = await createNewPdf();
+        const formReport = emptyFormReport();
         let totalPages = 0;
 
-        for (const resolved of resolvedPaths) {
+        for (let i = 0; i < resolvedPaths.length; i++) {
+          const resolved = resolvedPaths[i];
           const sourceDoc = await loadExistingPdf(resolved);
-          const formCheck = checkForFormFields(sourceDoc);
-          if (formCheck.hasFields) {
-            warnings.push(
-              `Warning: ${basename(resolved)} contains ${formCheck.fieldCount} form fields that were not preserved during merge. Form data appears visually but is no longer interactive.`,
-            );
-          }
+          const namespacePrefix = `${i + 1}-${basename(resolved, ".pdf")}`;
 
-          const copiedPages = await mergedDoc.copyPages(
+          const report = await copyPagesPreservingForms(
+            mergedDoc,
             sourceDoc,
             sourceDoc.getPageIndices(),
+            { namespacePrefix },
           );
-          for (const page of copiedPages) {
-            mergedDoc.addPage(page);
-          }
-          totalPages += copiedPages.length;
+          accumulateFormReport(formReport, report);
+          totalPages += sourceDoc.getPageCount();
+        }
+
+        if (flatten) {
+          mergedDoc.getForm().flatten();
         }
 
         if (totalPages > MAX_PAGE_WARNING) {
@@ -103,8 +128,14 @@ export function registerManipulateTools(server: McpServer): void {
 
         return toolSuccess({
           outputPath: resolvedOutput,
-          totalPages,
-          sourceFiles: resolvedPaths.length,
+          pageCount: totalPages,
+          inputFiles: resolvedPaths.length,
+          flattened: flatten === true,
+          formFields: {
+            preserved: flatten ? 0 : formReport.preserved,
+            renamed: formReport.renamed,
+            dropped: formReport.dropped,
+          },
           warnings,
           fileSize,
         });
@@ -121,7 +152,7 @@ export function registerManipulateTools(server: McpServer): void {
     "pdf_split",
     {
       description:
-        "Extract specific pages from a PDF into a new file. Warning: form fields in the source PDF are not preserved — they appear visually but become non-interactive.",
+        "Extract specific pages from a PDF into a new file. AcroForm fields on the extracted pages are preserved; fields on omitted pages are dropped. Set flatten:true to bake field values into static content.",
       inputSchema: z
         .object({
           filePath: z
@@ -136,6 +167,12 @@ export function registerManipulateTools(server: McpServer): void {
             .string()
             .max(4096)
             .describe("Absolute path for the output PDF"),
+          flatten: z
+            .boolean()
+            .optional()
+            .describe(
+              "Flatten the extracted form: bake field values into static content and remove interactivity. Defaults to false.",
+            ),
         })
         .strict(),
       annotations: {
@@ -145,7 +182,7 @@ export function registerManipulateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ filePath, pages, outputPath }) => {
+    async ({ filePath, pages, outputPath, flatten }) => {
       try {
         const resolvedPath = await validatePdfPath(filePath);
         await validateFileSize(resolvedPath);
@@ -155,18 +192,16 @@ export function registerManipulateTools(server: McpServer): void {
         const totalSourcePages = sourceDoc.getPageCount();
         const pageIndices = parsePageRange(pages, totalSourcePages);
 
-        const warnings: string[] = [];
-        const formCheck = checkForFormFields(sourceDoc);
-        if (formCheck.hasFields) {
-          warnings.push(
-            `Warning: source PDF contains ${formCheck.fieldCount} form fields that were not preserved during split. Form data appears visually but is no longer interactive.`,
-          );
-        }
-
         const newDoc = await createNewPdf();
-        const copiedPages = await newDoc.copyPages(sourceDoc, pageIndices);
-        for (const page of copiedPages) {
-          newDoc.addPage(page);
+        const formReport = await copyPagesPreservingForms(
+          newDoc,
+          sourceDoc,
+          pageIndices,
+          { namespacePrefix: basename(resolvedPath, ".pdf") },
+        );
+
+        if (flatten) {
+          newDoc.getForm().flatten();
         }
 
         await savePdf(newDoc, resolvedOutput);
@@ -176,7 +211,12 @@ export function registerManipulateTools(server: McpServer): void {
           outputPath: resolvedOutput,
           extractedPages: pages,
           totalSourcePages,
-          warnings,
+          flattened: flatten === true,
+          formFields: {
+            preserved: flatten ? 0 : formReport.preserved,
+            renamed: formReport.renamed,
+            dropped: formReport.dropped,
+          },
           fileSize,
         });
       } catch (error) {
@@ -697,7 +737,7 @@ export function registerManipulateTools(server: McpServer): void {
     "pdf_reorder_pages",
     {
       description:
-        "Reorder pages in a PDF. Specify the new page order as a comma-separated string (e.g. '3,1,2'). Duplicates are allowed. Warning: form fields are not preserved.",
+        "Reorder pages in a PDF. Specify the new page order as a comma-separated string (e.g. '3,1,2'). Duplicates are allowed. AcroForm fields are preserved. Set flatten:true to bake field values into static content.",
       inputSchema: z
         .object({
           filePath: z
@@ -714,6 +754,12 @@ export function registerManipulateTools(server: McpServer): void {
             .string()
             .max(4096)
             .describe("Absolute path for the reordered output PDF"),
+          flatten: z
+            .boolean()
+            .optional()
+            .describe(
+              "Flatten the reordered form: bake field values into static content and remove interactivity. Defaults to false.",
+            ),
         })
         .strict(),
       annotations: {
@@ -723,7 +769,7 @@ export function registerManipulateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ filePath, pageOrder, outputPath }) => {
+    async ({ filePath, pageOrder, outputPath, flatten }) => {
       try {
         const resolvedPath = await validatePdfPath(filePath);
         await validateFileSize(resolvedPath);
@@ -749,18 +795,16 @@ export function registerManipulateTools(server: McpServer): void {
           return toolError("Page order exceeds maximum of 2000 output pages.");
         }
 
-        const warnings: string[] = [];
-        const formCheck = checkForFormFields(sourceDoc);
-        if (formCheck.hasFields) {
-          warnings.push(
-            `Warning: source PDF contains ${formCheck.fieldCount} form fields that were not preserved during reorder. Form data appears visually but is no longer interactive.`,
-          );
-        }
-
         const newDoc = await createNewPdf();
-        const copiedPages = await newDoc.copyPages(sourceDoc, indices);
-        for (const page of copiedPages) {
-          newDoc.addPage(page);
+        const formReport = await copyPagesPreservingForms(
+          newDoc,
+          sourceDoc,
+          indices,
+          { namespacePrefix: basename(resolvedPath, ".pdf") },
+        );
+
+        if (flatten) {
+          newDoc.getForm().flatten();
         }
 
         await savePdf(newDoc, resolvedOutput);
@@ -769,14 +813,109 @@ export function registerManipulateTools(server: McpServer): void {
         return toolSuccess({
           outputPath: resolvedOutput,
           pageOrder,
-          totalPages: indices.length,
-          warnings,
+          pageCount: indices.length,
+          flattened: flatten === true,
+          formFields: {
+            preserved: flatten ? 0 : formReport.preserved,
+            renamed: formReport.renamed,
+            dropped: formReport.dropped,
+          },
           fileSize,
         });
       } catch (error) {
         return toolError(
           error instanceof Error ? error.message : String(error),
         );
+      }
+    },
+  );
+
+  // ── pdf_delete_pages ─────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_delete_pages",
+    {
+      description:
+        "Delete specific pages from a PDF, keeping the rest in their original order. AcroForm fields on the remaining pages are preserved. Set flatten:true to bake field values into static content. Cannot delete every page.",
+      inputSchema: z
+        .object({
+          filePath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the source PDF file"),
+          pages: z
+            .string()
+            .max(256)
+            .describe("Page range to DELETE, e.g. '2' or '1-3,5'"),
+          outputPath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path for the output PDF"),
+          flatten: z
+            .boolean()
+            .optional()
+            .describe(
+              "Flatten the resulting form: bake field values into static content and remove interactivity. Defaults to false.",
+            ),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ filePath, pages, outputPath, flatten }) => {
+      try {
+        const resolvedPath = await validatePdfPath(filePath);
+        await validateFileSize(resolvedPath);
+        const resolvedOutput = await validateOutputPath(outputPath, filePath);
+
+        const sourceDoc = await loadExistingPdf(resolvedPath);
+        const totalPages = sourceDoc.getPageCount();
+
+        const toDelete = new Set(parsePageRange(pages, totalPages));
+        const remainingIndices = Array.from(
+          { length: totalPages },
+          (_, i) => i,
+        ).filter((i) => !toDelete.has(i));
+
+        if (remainingIndices.length === 0) {
+          throw new PdfError(
+            "Cannot delete every page: the output PDF must keep at least one page.",
+            "INVALID_INPUT",
+          );
+        }
+
+        const newDoc = await createNewPdf();
+        const formReport = await copyPagesPreservingForms(
+          newDoc,
+          sourceDoc,
+          remainingIndices,
+          { namespacePrefix: basename(resolvedPath, ".pdf") },
+        );
+
+        if (flatten) {
+          newDoc.getForm().flatten();
+        }
+
+        await savePdf(newDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
+
+        return toolSuccess({
+          outputPath: resolvedOutput,
+          removedPages: pages,
+          remainingPageCount: remainingIndices.length,
+          flattened: flatten === true,
+          formFields: {
+            preserved: flatten ? 0 : formReport.preserved,
+            renamed: formReport.renamed,
+            dropped: formReport.dropped,
+          },
+          fileSize,
+        });
+      } catch (error) {
+        return toErrorResult(error);
       }
     },
   );

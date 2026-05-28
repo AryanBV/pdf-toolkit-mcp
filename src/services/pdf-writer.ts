@@ -22,15 +22,3 @@ export async function savePdf(
   await writeFile(outputPath, pdfBytes);
   return outputPath;
 }
-
-export function checkForFormFields(pdfDoc: PDFDocument): {
-  hasFields: boolean;
-  fieldCount: number;
-} {
-  try {
-    const fields = pdfDoc.getForm().getFields();
-    return { hasFields: fields.length > 0, fieldCount: fields.length };
-  } catch {
-    return { hasFields: false, fieldCount: 0 };
-  }
-}

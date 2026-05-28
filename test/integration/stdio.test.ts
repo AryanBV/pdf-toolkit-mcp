@@ -17,6 +17,7 @@ const EXPECTED_TOOLS = [
   "pdf_merge",
   "pdf_split",
   "pdf_rotate_pages",
+  "pdf_delete_pages",
   "pdf_encrypt",
   "pdf_add_page_numbers",
   "pdf_embed_qr_code",

@@ -20,9 +20,16 @@ high-fidelity creation, and real quality infrastructure.
 - **New tool `pdf_search`** — find text across a PDF, returning page numbers
   and surrounding snippets; literal or regex, case-insensitive by default.
 - **New tool `pdf_compare`** — page-by-page text diff between two PDFs.
+- **New tool `pdf_delete_pages`** — remove a page range, preserving form fields
+  on the remaining pages.
 
 ### Fixed
 
+- **`pdf_merge`, `pdf_split`, `pdf_reorder_pages` now PRESERVE AcroForm form
+  fields** instead of silently stripping them (the long-standing pdf-lib
+  `copyPages` limitation). Fields whose names collide across inputs are
+  auto-namespaced; `flatten:true` bakes values into static content. Each tool
+  reports `{ preserved, renamed, dropped }`.
 - `pdf_get_metadata` now includes `fileSize` in its response.
 - `pdf_get_form_fields` no longer silently masks a corrupt form structure as
   "no form" — it surfaces a real `CORRUPT_PDF` error.
