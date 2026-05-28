@@ -11,6 +11,9 @@ high-fidelity creation, and real quality infrastructure.
 
 ### Added
 
+- **New tool `pdf_render_pages`** — render PDF pages to PNG/JPEG image files
+  (PDFium WASM, zero native deps) so a vision-capable MCP client can read
+  scanned or image-only PDFs. Lazy-loaded engine keeps cold start fast.
 - Quality infrastructure: vitest test suite (incl. real stdio integration test
   and a stdout-pollution regression test), ESLint flat config + Prettier,
   Husky + lint-staged pre-commit hooks, and GitHub Actions CI.

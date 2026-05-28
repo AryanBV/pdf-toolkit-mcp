@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerReadTools } from "./tools/read.js";
 import { registerManipulateTools } from "./tools/manipulate.js";
 import { registerCreateTools } from "./tools/create.js";
+import { registerRenderTools } from "./tools/render.js";
 import { registerPrompts } from "./prompts/index.js";
 import { createRequire } from "node:module";
 
@@ -21,6 +22,7 @@ const server = new McpServer({
 registerReadTools(server);
 registerManipulateTools(server);
 registerCreateTools(server);
+registerRenderTools(server);
 registerPrompts(server);
 
 const transport = new StdioServerTransport();

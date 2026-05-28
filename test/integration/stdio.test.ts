@@ -27,6 +27,7 @@ const EXPECTED_TOOLS = [
   "pdf_embed_image",
   "pdf_create_from_markdown",
   "pdf_create_from_template",
+  "pdf_render_pages",
 ].sort();
 
 describe("MCP stdio transport", () => {
