@@ -28,6 +28,8 @@ const EXPECTED_TOOLS = [
   "pdf_create_from_markdown",
   "pdf_create_from_template",
   "pdf_render_pages",
+  "pdf_to_markdown",
+  "pdf_search",
 ].sort();
 
 describe("MCP stdio transport", () => {

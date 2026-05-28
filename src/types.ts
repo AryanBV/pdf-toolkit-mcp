@@ -14,11 +14,30 @@ export interface PdfMetadata {
   modificationDate?: string;
   pageCount: number;
   keywords?: string;
+  fileSize?: string;
 }
 
 export interface PageText {
   page: number;
   text: string;
+}
+
+/** A single positioned text fragment extracted from a PDF page. */
+export interface PositionedTextItem {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+}
+
+/** Positioned text for one page, including the page's media-box dimensions. */
+export interface PageTextLayout {
+  page: number;
+  width: number;
+  height: number;
+  items: PositionedTextItem[];
 }
 
 export interface FormField {

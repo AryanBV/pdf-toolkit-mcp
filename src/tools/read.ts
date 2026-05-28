@@ -1,15 +1,26 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import pdfLib from "@pdfme/pdf-lib";
 import { z } from "zod";
-import { extractPdfText, getPdfPageCount } from "../services/pdf-reader.js";
+import {
+  extractPdfText,
+  extractPositionedText,
+  getPdfPageCount,
+} from "../services/pdf-reader.js";
 import { loadExistingPdf } from "../services/pdf-writer.js";
 import {
   validatePdfPath,
   validateFileSize,
   parsePageRange,
 } from "../utils/validation.js";
-import { toolError, toolSuccess } from "../utils/errors.js";
-import { DEFAULT_EXTRACT_PAGES } from "../constants.js";
+import {
+  PdfError,
+  toolError,
+  toolSuccess,
+  toErrorResult,
+} from "../utils/errors.js";
+import { getFileSize } from "../utils/file-utils.js";
+import { DEFAULT_EXTRACT_PAGES, MAX_SEARCH_RESULTS } from "../constants.js";
+import { layoutToMarkdown } from "./markdown-from-layout.js";
 import type { PdfMetadata, FormField } from "../types.js";
 
 export function registerReadTools(server: McpServer): void {
@@ -119,6 +130,7 @@ export function registerReadTools(server: McpServer): void {
           modificationDate: pdfDoc.getModificationDate()?.toISOString(),
           pageCount: pdfDoc.getPageCount(),
           keywords: pdfDoc.getKeywords(),
+          fileSize: await getFileSize(resolvedPath),
         };
 
         return toolSuccess(metadata);
@@ -205,8 +217,17 @@ export function registerReadTools(server: McpServer): void {
               required,
             };
           });
-        } catch {
-          return toolSuccess({ hasForm: false, fieldCount: 0, fields: [] });
+        } catch (formError) {
+          // Reaching here means the PDF parsed but its AcroForm structure is
+          // broken. A PDF that simply has no form does NOT throw — pdf-lib
+          // returns an empty field list — so we must surface this as a real
+          // failure rather than masking it as "no form".
+          throw new PdfError(
+            `Failed to read form fields — the PDF's form structure may be corrupt: ${
+              formError instanceof Error ? formError.message : String(formError)
+            }`,
+            "CORRUPT_PDF",
+          );
         }
 
         return toolSuccess({
@@ -215,10 +236,209 @@ export function registerReadTools(server: McpServer): void {
           fields,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
+
+  // ── pdf_to_markdown ──────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_to_markdown",
+    {
+      description:
+        "Convert a PDF to clean, reading-order Markdown for LLM consumption: reconstructs columns, infers headings from font size, and detects lists. Best on clean, digital (text-based) PDFs; degrades on scanned/image-only PDFs (use pdf_render_pages for those) and very complex layouts. Returns the first 10 pages by default.",
+      inputSchema: z
+        .object({
+          filePath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the PDF file"),
+          pages: z
+            .string()
+            .max(256)
+            .optional()
+            .describe(
+              "Page range, e.g. '1-5' or '1,3,5'. Defaults to first 10 pages.",
+            ),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ filePath, pages }) => {
+      try {
+        const resolvedPath = await validatePdfPath(filePath);
+        await validateFileSize(resolvedPath);
+
+        const totalPages = await getPdfPageCount(resolvedPath);
+
+        let pageIndices: number[];
+        let pageLabel: string;
+        if (pages) {
+          pageIndices = parsePageRange(pages, totalPages);
+          pageLabel = pages;
+        } else {
+          const count = Math.min(DEFAULT_EXTRACT_PAGES, totalPages);
+          pageIndices = Array.from({ length: count }, (_, i) => i);
+          pageLabel = count === 1 ? "1" : `1-${count}`;
+        }
+
+        const layouts = await extractPositionedText(resolvedPath, pageIndices);
+        const markdown = layoutToMarkdown(layouts);
+
+        if (markdown.trim().length === 0) {
+          return toolSuccess(
+            `No extractable text found on pages ${pageLabel} of ${totalPages}. This may be a scanned or image-only PDF — use pdf_render_pages to read it visually.`,
+          );
+        }
+
+        return toolSuccess(markdown);
+      } catch (error) {
+        return toErrorResult(error);
+      }
+    },
+  );
+
+  // ── pdf_search ───────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_search",
+    {
+      description:
+        "Search text across a PDF and return matches with a short surrounding snippet and the page number. Treats the query as a literal substring unless regex is true. Case-insensitive by default. Searches all pages unless a range is given.",
+      inputSchema: z
+        .object({
+          filePath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the PDF file"),
+          query: z
+            .string()
+            .min(1)
+            .max(1024)
+            .describe("Text to find (literal substring unless regex is true)"),
+          regex: z
+            .boolean()
+            .optional()
+            .describe("Treat the query as a JavaScript regular expression."),
+          caseSensitive: z
+            .boolean()
+            .optional()
+            .describe("Match case exactly. Defaults to false."),
+          pages: z
+            .string()
+            .max(256)
+            .optional()
+            .describe("Page range, e.g. '1-5'. Defaults to all pages."),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ filePath, query, regex, caseSensitive, pages }) => {
+      try {
+        const resolvedPath = await validatePdfPath(filePath);
+        await validateFileSize(resolvedPath);
+
+        const totalPages = await getPdfPageCount(resolvedPath);
+
+        let pageIndices: number[] | undefined;
+        if (pages) {
+          pageIndices = parsePageRange(pages, totalPages);
+        }
+
+        const matcher = buildMatcher(
+          query,
+          regex ?? false,
+          caseSensitive ?? false,
+        );
+
+        const { pages: pageTexts } = await extractPdfText(
+          resolvedPath,
+          pageIndices,
+        );
+
+        const results: { page: number; context: string }[] = [];
+        let totalMatches = 0;
+        let capped = false;
+
+        for (const { page, text } of pageTexts) {
+          if (!text) continue;
+          // Reset lastIndex for global regexes between pages.
+          matcher.lastIndex = 0;
+          let match: RegExpExecArray | null;
+          while ((match = matcher.exec(text)) !== null) {
+            totalMatches++;
+            if (results.length < MAX_SEARCH_RESULTS) {
+              results.push({
+                page,
+                context: snippet(text, match.index, match[0].length),
+              });
+            } else {
+              capped = true;
+            }
+            // Avoid an infinite loop on zero-width matches.
+            if (match.index === matcher.lastIndex) matcher.lastIndex++;
+          }
+        }
+
+        const response: Record<string, unknown> = {
+          query,
+          totalMatches,
+          results,
+        };
+        if (capped) {
+          response.note = `Results capped at ${MAX_SEARCH_RESULTS}. Narrow the query or use a page range to see more.`;
+        }
+
+        return toolSuccess(response);
+      } catch (error) {
+        return toErrorResult(error);
+      }
+    },
+  );
+}
+
+const CONTEXT_RADIUS = 60;
+
+/** Build a global RegExp matcher for either a literal substring or a user regex. */
+function buildMatcher(
+  query: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+): RegExp {
+  const flags = caseSensitive ? "g" : "gi";
+  if (isRegex) {
+    try {
+      return new RegExp(query, flags);
+    } catch (err) {
+      throw new PdfError(
+        `Invalid regular expression: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+        "INVALID_INPUT",
+      );
+    }
+  }
+  return new RegExp(escapeRegExp(query), flags);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** A short snippet of text around a match, with ellipses when truncated. */
+function snippet(text: string, index: number, length: number): string {
+  const start = Math.max(0, index - CONTEXT_RADIUS);
+  const end = Math.min(text.length, index + length + CONTEXT_RADIUS);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < text.length ? "…" : "";
+  return (prefix + text.slice(start, end) + suffix).replace(/\s+/g, " ").trim();
 }

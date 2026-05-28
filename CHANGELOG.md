@@ -14,6 +14,17 @@ high-fidelity creation, and real quality infrastructure.
 - **New tool `pdf_render_pages`** — render PDF pages to PNG/JPEG image files
   (PDFium WASM, zero native deps) so a vision-capable MCP client can read
   scanned or image-only PDFs. Lazy-loaded engine keeps cold start fast.
+- **New tool `pdf_to_markdown`** — convert a PDF to reading-order Markdown
+  (column clustering, font-size heading inference, list detection) for LLM
+  consumption. Honest scope: best on clean digital PDFs.
+- **New tool `pdf_search`** — find text across a PDF, returning page numbers
+  and surrounding snippets; literal or regex, case-insensitive by default.
+
+### Fixed
+
+- `pdf_get_metadata` now includes `fileSize` in its response.
+- `pdf_get_form_fields` no longer silently masks a corrupt form structure as
+  "no form" — it surfaces a real `CORRUPT_PDF` error.
 - Quality infrastructure: vitest test suite (incl. real stdio integration test
   and a stdout-pollution regression test), ESLint flat config + Prettier,
   Husky + lint-staged pre-commit hooks, and GitHub Actions CI.
