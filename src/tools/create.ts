@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { PDFFont } from "@pdfme/pdf-lib";
 import pdfLib from "@pdfme/pdf-lib";
@@ -20,7 +20,10 @@ import {
 } from "../utils/validation.js";
 import { toolError, toolSuccess } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
-import { createFromMarkdown, renderDocDefinition } from "../services/pdf-creator.js";
+import {
+  createFromMarkdown,
+  renderDocDefinition,
+} from "../services/pdf-creator.js";
 import type { PdfDocDefinition } from "../services/pdf-creator.js";
 import { templateRegistry } from "../templates/index.js";
 import type { TemplateName } from "../types.js";
@@ -31,7 +34,7 @@ function wrapText(
   text: string,
   font: PDFFont,
   fontSize: number,
-  maxWidth: number
+  maxWidth: number,
 ): string[] {
   const paragraphs = text.split("\n");
   const lines: string[] = [];
@@ -108,10 +111,12 @@ export function registerCreateTools(server: McpServer): void {
             .string()
             .min(1)
             .max(10_000_000)
-            .describe(
-              "Text content for the PDF. Use \\n for line breaks."
-            ),
-          title: z.string().max(1000).optional().describe("PDF document title metadata"),
+            .describe("Text content for the PDF. Use \\n for line breaks."),
+          title: z
+            .string()
+            .max(1000)
+            .optional()
+            .describe("PDF document title metadata"),
           author: z
             .string()
             .max(1000)
@@ -142,7 +147,15 @@ export function registerCreateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ outputPath, content, title, author, pageSize, fontSize, margin }) => {
+    async ({
+      outputPath,
+      content,
+      title,
+      author,
+      pageSize,
+      fontSize,
+      margin,
+    }) => {
       try {
         const resolvedOutput = await validateOutputPath(outputPath);
 
@@ -199,10 +212,10 @@ export function registerCreateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_fill_form ───────────────────────────────────────────────────
@@ -220,7 +233,7 @@ export function registerCreateTools(server: McpServer): void {
           fields: z
             .record(z.union([z.string(), z.boolean()]))
             .describe(
-              "Object mapping field names to values. Strings for text/dropdown/radio, booleans for checkboxes."
+              "Object mapping field names to values. Strings for text/dropdown/radio, booleans for checkboxes.",
             ),
           outputPath: z
             .string()
@@ -230,14 +243,14 @@ export function registerCreateTools(server: McpServer): void {
             .boolean()
             .optional()
             .describe(
-              "Flatten form fields after filling (makes them non-editable). Defaults to false."
+              "Flatten form fields after filling (makes them non-editable). Defaults to false.",
             ),
           fontPath: z
             .string()
             .max(4096)
             .optional()
             .describe(
-              "Absolute path to a .ttf/.otf font file for non-Latin character support."
+              "Absolute path to a .ttf/.otf font file for non-Latin character support.",
             ),
         })
         .strict(),
@@ -250,9 +263,9 @@ export function registerCreateTools(server: McpServer): void {
     },
     async ({ filePath, fields, outputPath, flatten, fontPath }) => {
       try {
-        const BLOCKED_KEYS = ['__proto__', 'constructor', 'prototype'];
-        if (Object.keys(fields).some(k => BLOCKED_KEYS.includes(k))) {
-          return toolError('Input contains prohibited key names.');
+        const BLOCKED_KEYS = ["__proto__", "constructor", "prototype"];
+        if (Object.keys(fields).some((k) => BLOCKED_KEYS.includes(k))) {
+          return toolError("Input contains prohibited key names.");
         }
 
         const resolvedPath = await validatePdfPath(filePath);
@@ -267,14 +280,14 @@ export function registerCreateTools(server: McpServer): void {
           form.deleteXFA();
         } catch {
           return toolError(
-            "This PDF does not contain any form fields. Use pdf_get_form_fields to inspect a PDF's form structure."
+            "This PDF does not contain any form fields. Use pdf_get_form_fields to inspect a PDF's form structure.",
           );
         }
 
         const allFields = form.getFields();
         if (allFields.length === 0) {
           return toolError(
-            "This PDF does not contain any form fields. Use pdf_get_form_fields to inspect a PDF's form structure."
+            "This PDF does not contain any form fields. Use pdf_get_form_fields to inspect a PDF's form structure.",
           );
         }
 
@@ -283,11 +296,11 @@ export function registerCreateTools(server: McpServer): void {
           for (const [name, value] of Object.entries(fields)) {
             if (typeof value === "string") {
               const hasNonLatin = [...value].some(
-                (ch) => ch.charCodeAt(0) > 255
+                (ch) => ch.charCodeAt(0) > 255,
               );
               if (hasNonLatin) {
                 return toolError(
-                  `Non-Latin characters detected in field '${name}'. Provide a fontPath parameter pointing to a .ttf/.otf font file that supports these characters.`
+                  `Non-Latin characters detected in field '${name}'. Provide a fontPath parameter pointing to a .ttf/.otf font file that supports these characters.`,
                 );
               }
             }
@@ -302,10 +315,9 @@ export function registerCreateTools(server: McpServer): void {
           const fontBuffer = await readFile(resolvedFontPath);
           const fontBytes = toUint8Array(fontBuffer);
 
-          // @ts-ignore — fontkit module namespace satisfies the Fontkit interface structurally
           const fontkit = await import("fontkit");
           pdfDoc.registerFontkit(
-            fontkit as unknown as Parameters<typeof pdfDoc.registerFontkit>[0]
+            fontkit as unknown as Parameters<typeof pdfDoc.registerFontkit>[0],
           );
           customFont = await pdfDoc.embedFont(fontBytes);
         }
@@ -317,7 +329,7 @@ export function registerCreateTools(server: McpServer): void {
           const field = allFields.find((f) => f.getName() === name);
           if (!field) {
             return toolError(
-              `Field '${name}' not found in PDF. Available fields: ${availableNames.join(", ")}`
+              `Field '${name}' not found in PDF. Available fields: ${availableNames.join(", ")}`,
             );
           }
 
@@ -338,7 +350,7 @@ export function registerCreateTools(server: McpServer): void {
             field.select(String(value));
           } else {
             return toolError(
-              `Field '${name}' is of unsupported type for filling. Supported types: text, checkbox, dropdown, radio.`
+              `Field '${name}' is of unsupported type for filling. Supported types: text, checkbox, dropdown, radio.`,
             );
           }
 
@@ -360,10 +372,10 @@ export function registerCreateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_add_watermark ───────────────────────────────────────────────
@@ -378,7 +390,10 @@ export function registerCreateTools(server: McpServer): void {
             .string()
             .max(4096)
             .describe("Absolute path to the source PDF file"),
-          text: z.string().max(1000).describe("Watermark text to overlay on pages"),
+          text: z
+            .string()
+            .max(1000)
+            .describe("Watermark text to overlay on pages"),
           outputPath: z
             .string()
             .max(4096)
@@ -388,7 +403,7 @@ export function registerCreateTools(server: McpServer): void {
             .max(256)
             .optional()
             .describe(
-              "Page range, e.g. '1-5' or '1,3,5'. Omit to watermark all pages."
+              "Page range, e.g. '1-5' or '1,3,5'. Omit to watermark all pages.",
             ),
           opacity: z
             .number()
@@ -412,7 +427,7 @@ export function registerCreateTools(server: McpServer): void {
             .max(360)
             .optional()
             .describe(
-              "Watermark rotation in degrees (0–360). Defaults to 45 (diagonal)."
+              "Watermark rotation in degrees (0–360). Defaults to 45 (diagonal).",
             ),
         })
         .strict(),
@@ -484,10 +499,10 @@ export function registerCreateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_embed_image ─────────────────────────────────────────────────
@@ -516,20 +531,18 @@ export function registerCreateTools(server: McpServer): void {
             .describe("X position in points from the left edge of the page"),
           y: z
             .number()
-            .describe(
-              "Y position in points from the bottom edge of the page"
-            ),
+            .describe("Y position in points from the bottom edge of the page"),
           width: z
             .number()
             .optional()
             .describe(
-              "Image width in points. Omit to use original width (or scale proportionally if height is set)."
+              "Image width in points. Omit to use original width (or scale proportionally if height is set).",
             ),
           height: z
             .number()
             .optional()
             .describe(
-              "Image height in points. Omit to use original height (or scale proportionally if width is set)."
+              "Image height in points. Omit to use original height (or scale proportionally if width is set).",
             ),
           outputPath: z
             .string()
@@ -561,7 +574,7 @@ export function registerCreateTools(server: McpServer): void {
 
         if (page > totalPages) {
           return toolError(
-            `Page ${page} exceeds document length (${totalPages} pages).`
+            `Page ${page} exceeds document length (${totalPages} pages).`,
           );
         }
 
@@ -608,10 +621,10 @@ export function registerCreateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_create_from_markdown ──────────────────────────────────────────
@@ -635,7 +648,11 @@ export function registerCreateTools(server: McpServer): void {
             .enum(["A4", "LETTER", "LEGAL"])
             .optional()
             .describe("Page size. Defaults to A4."),
-          title: z.string().max(1000).optional().describe("PDF document title metadata"),
+          title: z
+            .string()
+            .max(1000)
+            .optional()
+            .describe("PDF document title metadata"),
           author: z
             .string()
             .max(1000)
@@ -654,7 +671,9 @@ export function registerCreateTools(server: McpServer): void {
             .string()
             .max(500)
             .optional()
-            .describe("Text to display in the page footer (above page numbers if both enabled)"),
+            .describe(
+              "Text to display in the page footer (above page numbers if both enabled)",
+            ),
         })
         .strict(),
       annotations: {
@@ -664,7 +683,16 @@ export function registerCreateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ markdown, outputPath, pageSize, title, author, pageNumbers, headerText, footerText }) => {
+    async ({
+      markdown,
+      outputPath,
+      pageSize,
+      title,
+      author,
+      pageNumbers,
+      headerText,
+      footerText,
+    }) => {
       try {
         const resolvedOutput = await validateOutputPath(outputPath);
 
@@ -687,10 +715,10 @@ export function registerCreateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_create_from_template ──────────────────────────────────────────
@@ -707,7 +735,7 @@ export function registerCreateTools(server: McpServer): void {
           data: z
             .record(z.unknown())
             .describe(
-              "Template data. Invoice: companyName, clientName, invoiceNumber, items[{description, quantity, unitPrice}], taxRate, dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName."
+              "Template data. Invoice: companyName, clientName, invoiceNumber, items[{description, quantity, unitPrice}], taxRate, dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName.",
             ),
           outputPath: z
             .string()
@@ -728,9 +756,9 @@ export function registerCreateTools(server: McpServer): void {
     },
     async ({ templateName, data, outputPath, pageSize }) => {
       try {
-        const BLOCKED_KEYS = ['__proto__', 'constructor', 'prototype'];
-        if (Object.keys(data).some(k => BLOCKED_KEYS.includes(k))) {
-          return toolError('Input contains prohibited key names.');
+        const BLOCKED_KEYS = ["__proto__", "constructor", "prototype"];
+        if (Object.keys(data).some((k) => BLOCKED_KEYS.includes(k))) {
+          return toolError("Input contains prohibited key names.");
         }
 
         const resolvedOutput = await validateOutputPath(outputPath);
@@ -738,11 +766,13 @@ export function registerCreateTools(server: McpServer): void {
         const builder = templateRegistry[templateName as TemplateName];
         if (!builder) {
           return toolError(
-            `Unknown template: ${templateName}. Available templates: invoice, report, letter.`
+            `Unknown template: ${templateName}. Available templates: invoice, report, letter.`,
           );
         }
 
-        const docDefinition = builder(data as Record<string, unknown>) as unknown as PdfDocDefinition;
+        const docDefinition = builder(
+          data as Record<string, unknown>,
+        ) as unknown as PdfDocDefinition;
         if (pageSize) {
           docDefinition.pageSize = pageSize;
         }
@@ -758,9 +788,9 @@ export function registerCreateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 }

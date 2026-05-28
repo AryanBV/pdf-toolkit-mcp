@@ -3,7 +3,9 @@ import { buildInvoice } from "./invoice.js";
 import { buildReport } from "./report.js";
 import { buildLetter } from "./letter.js";
 
-type TemplateBuilder = (data: Record<string, unknown>) => Record<string, unknown>;
+type TemplateBuilder = (
+  data: Record<string, unknown>,
+) => Record<string, unknown>;
 
 export const templateRegistry: Record<TemplateName, TemplateBuilder> = {
   invoice: buildInvoice,

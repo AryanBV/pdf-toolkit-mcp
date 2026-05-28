@@ -15,22 +15,22 @@
 
 Dual-engine architecture: **pdfmake** for rich document creation (Markdown, templates) + **@pdfme/pdf-lib** for existing PDF manipulation + **unpdf** for reading.
 
-| Dependency | Version | Why |
-|---|---|---|
-| TypeScript | strict, ESM (`"type": "module"`) | Type safety, all `.ts` imports use `.js` extension (Node16 resolution) |
-| Node.js | >= 18 | Minimum LTS with stable ESM support |
-| `@modelcontextprotocol/sdk` | ^1.29.0 | MCP protocol implementation. Use `server.registerTool()` — NOT `.tool()` (deprecated) |
-| `@pdfme/pdf-lib` | ^5.5.10 | Fork of abandoned `pdf-lib`. Existing PDF manipulation (merge, split, rotate, watermark, embed, page numbers, reorder, QR) |
-| `unpdf` | ^1.4.0 | Text extraction. Replaces `pdfjs-dist` which requires Node 22+ canvas bindings |
-| `pdfmake` | ^0.3.7 | Rich PDF creation from structured definitions. CJS — use `createRequire()` import pattern (Rule 15) |
-| `marked` | ^17.0.5 | Markdown → HTML conversion for pdf_create_from_markdown pipeline |
-| `html-to-pdfmake` | ^2.5.33 | HTML → pdfmake document definitions. CJS — use `createRequire()` import pattern |
-| `jsdom` | ^27.0.1 | DOM environment for html-to-pdfmake. ALWAYS `window.close()` after use (Rule 16) |
-| `@pdfsmaller/pdf-encrypt-lite` | ^1.0.2 | PDF encryption with RC4. ESM — `import { encryptPDF } from '@pdfsmaller/pdf-encrypt-lite'` |
-| `@bwip-js/node` | ^4.8.0 | Barcode/QR code generation as PNG buffers. ESM — `import { toBuffer } from '@bwip-js/node'` |
-| `fontkit` | ^2.0.0 | Non-Latin font embedding for form filling. Use `import fontkit from 'fontkit'` — NOT `@pdf-lib/fontkit` (stale wrapper) |
-| `zod` | ^3.25.0 | Schema validation for tool inputs. Compatible with MCP SDK's `^3.25 \|\| ^4.0` range |
-| Transport | stdio | stdin/stdout protocol channel — console.log is forbidden |
+| Dependency                     | Version                          | Why                                                                                                                        |
+| ------------------------------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| TypeScript                     | strict, ESM (`"type": "module"`) | Type safety, all `.ts` imports use `.js` extension (Node16 resolution)                                                     |
+| Node.js                        | >= 18                            | Minimum LTS with stable ESM support                                                                                        |
+| `@modelcontextprotocol/sdk`    | ^1.29.0                          | MCP protocol implementation. Use `server.registerTool()` — NOT `.tool()` (deprecated)                                      |
+| `@pdfme/pdf-lib`               | ^5.5.10                          | Fork of abandoned `pdf-lib`. Existing PDF manipulation (merge, split, rotate, watermark, embed, page numbers, reorder, QR) |
+| `unpdf`                        | ^1.4.0                           | Text extraction. Replaces `pdfjs-dist` which requires Node 22+ canvas bindings                                             |
+| `pdfmake`                      | ^0.3.7                           | Rich PDF creation from structured definitions. CJS — use `createRequire()` import pattern (Rule 15)                        |
+| `marked`                       | ^17.0.5                          | Markdown → HTML conversion for pdf_create_from_markdown pipeline                                                           |
+| `html-to-pdfmake`              | ^2.5.33                          | HTML → pdfmake document definitions. CJS — use `createRequire()` import pattern                                            |
+| `jsdom`                        | ^27.0.1                          | DOM environment for html-to-pdfmake. ALWAYS `window.close()` after use (Rule 16)                                           |
+| `@pdfsmaller/pdf-encrypt-lite` | ^1.0.2                           | PDF encryption with RC4. ESM — `import { encryptPDF } from '@pdfsmaller/pdf-encrypt-lite'`                                 |
+| `@bwip-js/node`                | ^4.8.0                           | Barcode/QR code generation as PNG buffers. ESM — `import { toBuffer } from '@bwip-js/node'`                                |
+| `fontkit`                      | ^2.0.0                           | Non-Latin font embedding for form filling. Use `import fontkit from 'fontkit'` — NOT `@pdf-lib/fontkit` (stale wrapper)    |
+| `zod`                          | ^3.25.0                          | Schema validation for tool inputs. Compatible with MCP SDK's `^3.25 \|\| ^4.0` range                                       |
+| Transport                      | stdio                            | stdin/stdout protocol channel — console.log is forbidden                                                                   |
 
 ## 3. Project Structure
 
@@ -82,11 +82,19 @@ const server = new McpServer({
 server.registerTool(
   "pdf_extract_text",
   {
-    description: "Extract text content from a PDF file. Returns first 10 pages by default to avoid exceeding LLM context limits.",
-    inputSchema: z.object({
-      filePath: z.string().describe("Absolute path to the PDF file"),
-      pages: z.string().optional().describe("Page range, e.g. '1-5' or '1,3,5'. Defaults to first 10 pages."),
-    }).strict(),
+    description:
+      "Extract text content from a PDF file. Returns first 10 pages by default to avoid exceeding LLM context limits.",
+    inputSchema: z
+      .object({
+        filePath: z.string().describe("Absolute path to the PDF file"),
+        pages: z
+          .string()
+          .optional()
+          .describe(
+            "Page range, e.g. '1-5' or '1,3,5'. Defaults to first 10 pages.",
+          ),
+      })
+      .strict(),
     annotations: {
       readOnlyHint: true,
       destructiveHint: false,
@@ -99,7 +107,7 @@ server.registerTool(
     return {
       content: [{ type: "text", text: "extracted text..." }],
     };
-  }
+  },
 );
 ```
 
@@ -154,12 +162,12 @@ Every rule has a reason. Do not remove or weaken any of these.
 14. **`@pdfme/pdf-lib` ESM Import Pattern** — The package's `exports` field maps `import.node` to a CJS build, so Node.js cannot resolve named ESM imports at runtime. Use this dual-import pattern:
 
 ```typescript
-import type { PDFDocument } from "@pdfme/pdf-lib";  // compile-time types only
-import pdfLib from "@pdfme/pdf-lib";                 // runtime default import
+import type { PDFDocument } from "@pdfme/pdf-lib"; // compile-time types only
+import pdfLib from "@pdfme/pdf-lib"; // runtime default import
 
 // Access static methods via the default import:
-pdfLib.PDFDocument.load(data)   // not PDFDocument.load()
-pdfLib.PDFDocument.create()     // not PDFDocument.create()
+pdfLib.PDFDocument.load(data); // not PDFDocument.load()
+pdfLib.PDFDocument.create(); // not PDFDocument.create()
 
 // Use the type import for annotations:
 function example(pdfDoc: PDFDocument): void {}
@@ -198,24 +206,24 @@ try {
 
 ## 6. Tools Reference
 
-| Tool | File | Library | Type | Description |
-|---|---|---|---|---|
-| `pdf_extract_text` | `tools/read.ts` | unpdf | Read | Extract text from PDF pages (default: first 10) |
-| `pdf_get_metadata` | `tools/read.ts` | unpdf | Read | Get document title, author, page count, creation date |
-| `pdf_get_form_fields` | `tools/read.ts` | @pdfme/pdf-lib | Read | List form fields with names, types, and values |
-| `pdf_merge` | `tools/manipulate.ts` | @pdfme/pdf-lib | Write | Merge multiple PDFs into one (warns: strips form fields) |
-| `pdf_split` | `tools/manipulate.ts` | @pdfme/pdf-lib | Write | Split PDF by page ranges (warns: strips form fields) |
-| `pdf_rotate_pages` | `tools/manipulate.ts` | @pdfme/pdf-lib | Write | Rotate specified pages by 90/180/270 degrees |
-| `pdf_encrypt` | `tools/manipulate.ts` | pdf-encrypt-lite | Write | Encrypt PDF with user/owner passwords |
-| `pdf_add_page_numbers` | `tools/manipulate.ts` | @pdfme/pdf-lib | Write | Add page numbers to PDF pages at configurable position |
-| `pdf_embed_qr_code` | `tools/manipulate.ts` | @bwip-js/node + @pdfme/pdf-lib | Write | Embed QR code or barcode into a PDF page |
-| `pdf_reorder_pages` | `tools/manipulate.ts` | @pdfme/pdf-lib | Write | Reorder PDF pages in specified order |
-| `pdf_create` | `tools/create.ts` | @pdfme/pdf-lib | Write | Create new PDF from text content |
-| `pdf_fill_form` | `tools/create.ts` | @pdfme/pdf-lib + fontkit | Write | Fill PDF form fields (supports non-Latin via fontkit) |
-| `pdf_add_watermark` | `tools/create.ts` | @pdfme/pdf-lib | Write | Add text watermark to all or specified pages |
-| `pdf_embed_image` | `tools/create.ts` | @pdfme/pdf-lib | Write | Embed PNG/JPEG image into a PDF page |
-| `pdf_create_from_markdown` | `tools/create.ts` | pdfmake + marked | Write | Create rich PDF from Markdown (headings, tables, lists, code) |
-| `pdf_create_from_template` | `tools/create.ts` | pdfmake | Write | Create PDF from named template (invoice, report, letter) |
+| Tool                       | File                  | Library                        | Type  | Description                                                   |
+| -------------------------- | --------------------- | ------------------------------ | ----- | ------------------------------------------------------------- |
+| `pdf_extract_text`         | `tools/read.ts`       | unpdf                          | Read  | Extract text from PDF pages (default: first 10)               |
+| `pdf_get_metadata`         | `tools/read.ts`       | unpdf                          | Read  | Get document title, author, page count, creation date         |
+| `pdf_get_form_fields`      | `tools/read.ts`       | @pdfme/pdf-lib                 | Read  | List form fields with names, types, and values                |
+| `pdf_merge`                | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Merge multiple PDFs into one (warns: strips form fields)      |
+| `pdf_split`                | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Split PDF by page ranges (warns: strips form fields)          |
+| `pdf_rotate_pages`         | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Rotate specified pages by 90/180/270 degrees                  |
+| `pdf_encrypt`              | `tools/manipulate.ts` | pdf-encrypt-lite               | Write | Encrypt PDF with user/owner passwords                         |
+| `pdf_add_page_numbers`     | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Add page numbers to PDF pages at configurable position        |
+| `pdf_embed_qr_code`        | `tools/manipulate.ts` | @bwip-js/node + @pdfme/pdf-lib | Write | Embed QR code or barcode into a PDF page                      |
+| `pdf_reorder_pages`        | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Reorder PDF pages in specified order                          |
+| `pdf_create`               | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Create new PDF from text content                              |
+| `pdf_fill_form`            | `tools/create.ts`     | @pdfme/pdf-lib + fontkit       | Write | Fill PDF form fields (supports non-Latin via fontkit)         |
+| `pdf_add_watermark`        | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Add text watermark to all or specified pages                  |
+| `pdf_embed_image`          | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Embed PNG/JPEG image into a PDF page                          |
+| `pdf_create_from_markdown` | `tools/create.ts`     | pdfmake + marked               | Write | Create rich PDF from Markdown (headings, tables, lists, code) |
+| `pdf_create_from_template` | `tools/create.ts`     | pdfmake                        | Write | Create PDF from named template (invoice, report, letter)      |
 
 ## 7. Known Limitations
 

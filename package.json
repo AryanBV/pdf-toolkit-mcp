@@ -18,8 +18,17 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "generate-fixtures": "npx tsx scripts/generate-fixtures.ts",
-    "test": "npx tsx scripts/test-tools.ts"
+    "generate-fixtures": "tsx scripts/generate-fixtures.ts",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage",
+    "test:legacy": "tsx scripts/test-tools.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky || exit 0"
   },
   "keywords": [
     "mcp",
@@ -50,22 +59,65 @@
   },
   "dependencies": {
     "@bwip-js/node": "^4.8.0",
+    "@hyzyla/pdfium": "^2.1.13",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@neslinesli93/qpdf-wasm": "^0.3.0",
     "@pdfme/pdf-lib": "^5.5.10",
     "@pdfsmaller/pdf-encrypt-lite": "^1.0.2",
+    "@react-pdf/renderer": "^4.5.1",
+    "diff": "^9.0.0",
     "fontkit": "^2.0.0",
     "html-to-pdfmake": "^2.5.33",
+    "jpeg-js": "^0.4.4",
     "jsdom": "^27.0.1",
     "marked": "^17.0.5",
+    "mdast-util-to-markdown": "^2.1.2",
     "pdfmake": "^0.3.7",
+    "pngjs": "^7.0.0",
+    "react": "^19.2.6",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
     "unpdf": "^1.4.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/fontkit": "^2.0.9",
     "@types/jsdom": "^28.0.1",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^22.0.0",
     "@types/pdfmake": "^0.3.2",
+    "@types/pixelmatch": "^5.2.6",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "^19.2.15",
+    "@vitest/coverage-v8": "^3.2.4",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.5",
+    "pixelmatch": "^7.2.0",
+    "prettier": "^3.8.3",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.60.0",
+    "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "fast-uri": ">=3.1.2",
+    "hono": ">=4.12.18",
+    "@hono/node-server": "^1.19.13",
+    "ip-address": ">=10.1.1",
+    "qs": ">=6.15.2",
+    "ws": ">=8.20.1"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   }
 }

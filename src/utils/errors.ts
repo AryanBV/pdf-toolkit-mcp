@@ -1,16 +1,57 @@
 import { CHARACTER_LIMIT } from "../constants.js";
 import type { ToolResult } from "../types.js";
 
-export function toolError(message: string): ToolResult {
+/**
+ * Stable error codes returned to clients. These let MCP clients react to
+ * specific failure classes without string-matching messages.
+ */
+export type ErrorCode =
+  | "INVALID_INPUT"
+  | "FILE_NOT_FOUND"
+  | "NOT_A_PDF"
+  | "PERMISSION_DENIED"
+  | "CORRUPT_PDF"
+  | "ENCRYPTED_PDF"
+  | "PAGE_OUT_OF_RANGE"
+  | "FIELD_NOT_FOUND"
+  | "UNSUPPORTED_FORMAT"
+  | "RESOURCE_LIMIT"
+  | "WASM_LOAD_FAILED"
+  | "INTERNAL";
+
+/** Error carrying a stable {@link ErrorCode}. Validators/services throw this. */
+export class PdfError extends Error {
+  readonly code: ErrorCode;
+  constructor(message: string, code: ErrorCode = "INTERNAL") {
+    super(message);
+    this.name = "PdfError";
+    this.code = code;
+  }
+}
+
+/**
+ * Build an error ToolResult. When a code is supplied the message is prefixed
+ * with `Error [CODE]:`; without a code the message is returned verbatim
+ * (backward-compatible with existing call sites).
+ */
+export function toolError(message: string, code?: ErrorCode): ToolResult {
+  const text = code ? `Error [${code}]: ${message}` : message;
   return {
     isError: true,
-    content: [{ type: "text", text: message }],
+    content: [{ type: "text", text }],
   };
+}
+
+/** Convert any thrown value into a clean error ToolResult (never leaks a stack). */
+export function toErrorResult(err: unknown): ToolResult {
+  if (err instanceof PdfError) return toolError(err.message, err.code);
+  const message = err instanceof Error ? err.message : String(err);
+  return toolError(`Error: ${message}`);
 }
 
 export function toolSuccess(data: unknown): ToolResult {
   const text =
-    typeof data === "string" ? data : JSON.stringify(data, null, 2) ?? "";
+    typeof data === "string" ? data : (JSON.stringify(data, null, 2) ?? "");
 
   if (text.length > CHARACTER_LIMIT) {
     return {
@@ -19,7 +60,7 @@ export function toolSuccess(data: unknown): ToolResult {
           type: "text",
           text:
             text.slice(0, CHARACTER_LIMIT) +
-            "\n\n[Output truncated at 25,000 characters. Use page ranges to extract smaller sections.]",
+            `\n\n[Output truncated at ${CHARACTER_LIMIT.toLocaleString()} characters. Use page ranges to extract smaller sections.]`,
         },
       ],
     };

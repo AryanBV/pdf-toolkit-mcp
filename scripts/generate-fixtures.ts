@@ -30,7 +30,7 @@ async function createSamplePdf(): Promise<void> {
 
     page.drawText(
       `This is the body text on page ${i}. It contains enough text to verify extraction works correctly across multiple pages.`,
-      { x: 50, y: height - 120, size: 12, font }
+      { x: 50, y: height - 120, size: 12, font },
     );
   }
 
@@ -59,13 +59,23 @@ async function createFormPdf(): Promise<void> {
   // Checkbox: Agree
   page.drawText("Agree:", { x: 50, y: height - 130, size: 12, font });
   const agreeField = form.createCheckBox("Agree");
-  agreeField.addToPage(page, { x: 120, y: height - 145, width: 15, height: 15 });
+  agreeField.addToPage(page, {
+    x: 120,
+    y: height - 145,
+    width: 15,
+    height: 15,
+  });
 
   // Dropdown: Country
   page.drawText("Country:", { x: 50, y: height - 180, size: 12, font });
   const countryField = form.createDropdown("Country");
   countryField.setOptions(["US", "UK", "IN"]);
-  countryField.addToPage(page, { x: 120, y: height - 195, width: 200, height: 25 });
+  countryField.addToPage(page, {
+    x: 120,
+    y: height - 195,
+    width: 200,
+    height: 25,
+  });
 
   const bytes = await doc.save();
   await writeFile(join(FIXTURES_DIR, "sample-form.pdf"), bytes);
@@ -84,7 +94,7 @@ function createMinimalPng(): Buffer {
     rawData[offset] = 0x00; // no filter
     for (let col = 0; col < width; col++) {
       const px = offset + 1 + col * 3;
-      rawData[px] = 0xff;     // R
+      rawData[px] = 0xff; // R
       rawData[px + 1] = 0x00; // G
       rawData[px + 2] = 0x00; // B
     }
@@ -121,8 +131,8 @@ function createMinimalPng(): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;  // bit depth
-  ihdr[9] = 2;  // color type: RGB
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: RGB
   ihdr[10] = 0; // compression
   ihdr[11] = 0; // filter
   ihdr[12] = 0; // interlace
@@ -143,7 +153,7 @@ function createMinimalPng(): Buffer {
 async function createNotAPdf(): Promise<void> {
   await writeFile(
     join(FIXTURES_DIR, "not-a-pdf.txt"),
-    "This is not a PDF file. It is a plain text file used for error handling tests."
+    "This is not a PDF file. It is a plain text file used for error handling tests.",
   );
 }
 

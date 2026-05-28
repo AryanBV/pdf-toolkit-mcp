@@ -28,18 +28,17 @@ The standout feature — turn Markdown into professional PDFs:
 
 Revenue grew **23% year-over-year**, driven by enterprise expansion.
 
-| Region    | Q1 2025  | Q1 2026  | Growth |
-|-----------|----------|----------|--------|
-| Americas  | $1.2M    | $1.5M    | +25%   |
-| EMEA      | $800K    | $960K    | +20%   |
-| APAC      | $400K    | $520K    | +30%   |
+| Region   | Q1 2025 | Q1 2026 | Growth |
+| -------- | ------- | ------- | ------ |
+| Americas | $1.2M   | $1.5M   | +25%   |
+| EMEA     | $800K   | $960K   | +20%   |
+| APAC     | $400K   | $520K   | +30%   |
 
 ## Key Wins
 
 1. Signed 12 new enterprise contracts
 2. Reduced churn to 3.1%
 3. Launched self-serve tier
-
 ```
 
 This produces a multi-page PDF with formatted headings, styled tables, numbered lists, bold/italic text, and page numbers — all from a single tool call.
@@ -133,24 +132,24 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 16 tools organized by category:
 
-| Category | Tool | Description |
-|----------|------|-------------|
-| **Create** | `pdf_create` | Create new PDF from text content |
-| | `pdf_create_from_markdown` | Create rich PDF from Markdown (headings, tables, lists, code blocks) |
-| | `pdf_create_from_template` | Create PDF from template (invoice, report, letter) |
-| **Read** | `pdf_extract_text` | Extract text from PDF pages (first 10 by default) |
-| | `pdf_get_metadata` | Get title, author, page count, creation date |
-| | `pdf_get_form_fields` | List form fields with names, types, and values |
-| **Modify** | `pdf_merge` | Merge multiple PDFs into one |
-| | `pdf_split` | Extract page ranges into a new PDF |
-| | `pdf_rotate_pages` | Rotate pages by 90, 180, or 270 degrees |
-| | `pdf_reorder_pages` | Reorder pages in any order (supports duplication) |
-| **Enhance** | `pdf_add_watermark` | Add text watermark to pages |
-| | `pdf_add_page_numbers` | Add page numbers (configurable position and format) |
-| | `pdf_embed_image` | Embed PNG or JPEG image into a page |
-| **Forms** | `pdf_fill_form` | Fill form fields (text, checkbox, dropdown, radio) |
-| **Security** | `pdf_encrypt` | Password-protect with user/owner passwords |
-| | `pdf_embed_qr_code` | Embed QR code or barcode (Code128, DataMatrix, EAN-13, PDF417, Aztec) |
+| Category     | Tool                       | Description                                                           |
+| ------------ | -------------------------- | --------------------------------------------------------------------- |
+| **Create**   | `pdf_create`               | Create new PDF from text content                                      |
+|              | `pdf_create_from_markdown` | Create rich PDF from Markdown (headings, tables, lists, code blocks)  |
+|              | `pdf_create_from_template` | Create PDF from template (invoice, report, letter)                    |
+| **Read**     | `pdf_extract_text`         | Extract text from PDF pages (first 10 by default)                     |
+|              | `pdf_get_metadata`         | Get title, author, page count, creation date                          |
+|              | `pdf_get_form_fields`      | List form fields with names, types, and values                        |
+| **Modify**   | `pdf_merge`                | Merge multiple PDFs into one                                          |
+|              | `pdf_split`                | Extract page ranges into a new PDF                                    |
+|              | `pdf_rotate_pages`         | Rotate pages by 90, 180, or 270 degrees                               |
+|              | `pdf_reorder_pages`        | Reorder pages in any order (supports duplication)                     |
+| **Enhance**  | `pdf_add_watermark`        | Add text watermark to pages                                           |
+|              | `pdf_add_page_numbers`     | Add page numbers (configurable position and format)                   |
+|              | `pdf_embed_image`          | Embed PNG or JPEG image into a page                                   |
+| **Forms**    | `pdf_fill_form`            | Fill form fields (text, checkbox, dropdown, radio)                    |
+| **Security** | `pdf_encrypt`              | Password-protect with user/owner passwords                            |
+|              | `pdf_embed_qr_code`        | Embed QR code or barcode (Code128, DataMatrix, EAN-13, PDF417, Aztec) |
 
 ## Templates
 

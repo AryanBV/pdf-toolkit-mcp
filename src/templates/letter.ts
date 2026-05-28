@@ -1,4 +1,6 @@
-export function buildLetter(data: Record<string, unknown>): Record<string, unknown> {
+export function buildLetter(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
   const senderName = String(data.senderName ?? "");
   const senderAddress = String(data.senderAddress ?? "");
   const senderTitle = String(data.senderTitle ?? "");
@@ -18,13 +20,37 @@ export function buildLetter(data: Record<string, unknown>): Record<string, unkno
       ? [
           { text: senderName, fontSize: 16, bold: true, color: "#2c3e50" },
           ...(senderAddress
-            ? [{ text: senderAddress, fontSize: 9, color: "#666666", margin: [0, 2, 0, 0] }]
+            ? [
+                {
+                  text: senderAddress,
+                  fontSize: 9,
+                  color: "#666666",
+                  margin: [0, 2, 0, 0],
+                },
+              ]
             : []),
           ...(senderTitle
-            ? [{ text: senderTitle, fontSize: 9, color: "#666666", margin: [0, 2, 0, 0] }]
+            ? [
+                {
+                  text: senderTitle,
+                  fontSize: 9,
+                  color: "#666666",
+                  margin: [0, 2, 0, 0],
+                },
+              ]
             : []),
           {
-            canvas: [{ type: "line", x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 0.5, lineColor: "#cccccc" }],
+            canvas: [
+              {
+                type: "line",
+                x1: 0,
+                y1: 0,
+                x2: 515,
+                y2: 0,
+                lineWidth: 0.5,
+                lineColor: "#cccccc",
+              },
+            ],
             margin: [0, 10, 0, 20],
           },
         ]
@@ -34,12 +60,26 @@ export function buildLetter(data: Record<string, unknown>): Record<string, unkno
     // Recipient block
     { text: recipientName, fontSize: 11, bold: true },
     ...(recipientAddress
-      ? [{ text: recipientAddress, fontSize: 11, color: "#666666", margin: [0, 2, 0, 0] }]
+      ? [
+          {
+            text: recipientAddress,
+            fontSize: 11,
+            color: "#666666",
+            margin: [0, 2, 0, 0],
+          },
+        ]
       : []),
     { text: "", margin: [0, 0, 0, 20] },
     // Subject line
     ...(subject
-      ? [{ text: `Re: ${subject}`, fontSize: 11, bold: true, margin: [0, 0, 0, 20] }]
+      ? [
+          {
+            text: `Re: ${subject}`,
+            fontSize: 11,
+            bold: true,
+            margin: [0, 0, 0, 20],
+          },
+        ]
       : []),
     // Body paragraphs
     ...bodyParagraphs.map((paragraph, idx) => ({
@@ -55,7 +95,14 @@ export function buildLetter(data: Record<string, unknown>): Record<string, unkno
     // Signature
     { text: signatureName, fontSize: 11, bold: true },
     ...(senderTitle
-      ? [{ text: senderTitle, fontSize: 10, color: "#666666", margin: [0, 2, 0, 0] }]
+      ? [
+          {
+            text: senderTitle,
+            fontSize: 10,
+            color: "#666666",
+            margin: [0, 2, 0, 0],
+          },
+        ]
       : []),
   ];
 

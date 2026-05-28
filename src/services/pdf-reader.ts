@@ -13,7 +13,7 @@ export async function loadPdf(filePath: string): Promise<PDFDocumentProxy> {
 
 export async function extractPdfText(
   filePath: string,
-  pageIndices?: number[]
+  pageIndices?: number[],
 ): Promise<{ totalPages: number; pages: PageText[] }> {
   const buffer = await readFile(filePath);
   const data = toUint8Array(buffer);

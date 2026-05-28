@@ -35,7 +35,9 @@ export function registerManipulateTools(server: McpServer): void {
             .array(z.string().max(4096))
             .min(2)
             .max(MAX_MERGE_FILES)
-            .describe("Array of absolute paths to PDF files to merge, in order"),
+            .describe(
+              "Array of absolute paths to PDF files to merge, in order",
+            ),
           outputPath: z
             .string()
             .max(4096)
@@ -69,13 +71,13 @@ export function registerManipulateTools(server: McpServer): void {
           const formCheck = checkForFormFields(sourceDoc);
           if (formCheck.hasFields) {
             warnings.push(
-              `Warning: ${basename(resolved)} contains ${formCheck.fieldCount} form fields that were not preserved during merge. Form data appears visually but is no longer interactive.`
+              `Warning: ${basename(resolved)} contains ${formCheck.fieldCount} form fields that were not preserved during merge. Form data appears visually but is no longer interactive.`,
             );
           }
 
           const copiedPages = await mergedDoc.copyPages(
             sourceDoc,
-            sourceDoc.getPageIndices()
+            sourceDoc.getPageIndices(),
           );
           for (const page of copiedPages) {
             mergedDoc.addPage(page);
@@ -85,7 +87,7 @@ export function registerManipulateTools(server: McpServer): void {
 
         if (totalPages > MAX_PAGE_WARNING) {
           warnings.push(
-            `Warning: merged document has ${totalPages.toLocaleString()} pages, which may be slow to process.`
+            `Warning: merged document has ${totalPages.toLocaleString()} pages, which may be slow to process.`,
           );
         }
 
@@ -101,10 +103,10 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_split ────────────────────────────────────────────────────────
@@ -115,13 +117,14 @@ export function registerManipulateTools(server: McpServer): void {
         "Extract specific pages from a PDF into a new file. Warning: form fields in the source PDF are not preserved — they appear visually but become non-interactive.",
       inputSchema: z
         .object({
-          filePath: z.string().max(4096).describe("Absolute path to the source PDF file"),
+          filePath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the source PDF file"),
           pages: z
             .string()
             .max(256)
-            .describe(
-              "Page range to extract, e.g. '1-5' or '1,3,5'"
-            ),
+            .describe("Page range to extract, e.g. '1-5' or '1,3,5'"),
           outputPath: z
             .string()
             .max(4096)
@@ -149,7 +152,7 @@ export function registerManipulateTools(server: McpServer): void {
         const formCheck = checkForFormFields(sourceDoc);
         if (formCheck.hasFields) {
           warnings.push(
-            `Warning: source PDF contains ${formCheck.fieldCount} form fields that were not preserved during split. Form data appears visually but is no longer interactive.`
+            `Warning: source PDF contains ${formCheck.fieldCount} form fields that were not preserved during split. Form data appears visually but is no longer interactive.`,
           );
         }
 
@@ -171,10 +174,10 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_rotate_pages ─────────────────────────────────────────────────
@@ -185,13 +188,16 @@ export function registerManipulateTools(server: McpServer): void {
         "Rotate pages in a PDF by 90, 180, or 270 degrees. Rotation is additive to any existing rotation. Rotates all pages if no page range is specified.",
       inputSchema: z
         .object({
-          filePath: z.string().max(4096).describe("Absolute path to the source PDF file"),
+          filePath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the source PDF file"),
           pages: z
             .string()
             .max(256)
             .optional()
             .describe(
-              "Page range to rotate, e.g. '1-5' or '1,3,5'. Omit to rotate all pages."
+              "Page range to rotate, e.g. '1-5' or '1,3,5'. Omit to rotate all pages.",
             ),
           degrees: z
             .union([z.literal(90), z.literal(180), z.literal(270)])
@@ -235,7 +241,8 @@ export function registerManipulateTools(server: McpServer): void {
         await savePdf(pdfDoc, resolvedOutput);
         const fileSize = await getFileSize(resolvedOutput);
 
-        const rotatedLabel = pages ?? (totalPages === 1 ? "1" : `1-${totalPages}`);
+        const rotatedLabel =
+          pages ?? (totalPages === 1 ? "1" : `1-${totalPages}`);
 
         return toolSuccess({
           outputPath: resolvedOutput,
@@ -245,10 +252,10 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_encrypt ─────────────────────────────────────────────────────
@@ -277,7 +284,7 @@ export function registerManipulateTools(server: McpServer): void {
             .max(128)
             .optional()
             .describe(
-              "Password for editing permissions. Defaults to userPassword if omitted."
+              "Password for editing permissions. Defaults to userPassword if omitted.",
             ),
         })
         .strict(),
@@ -297,11 +304,11 @@ export function registerManipulateTools(server: McpServer): void {
         const buffer = await readFile(resolvedPath);
         const pdfBytes = toUint8Array(buffer);
 
-        const encryptedBytes = await encryptPDF(
+        const encryptedBytes = (await encryptPDF(
           pdfBytes,
           userPassword,
-          ownerPassword ?? null
-        ) as unknown as Uint8Array;
+          ownerPassword ?? null,
+        )) as unknown as Uint8Array;
 
         await writeFile(resolvedOutput, encryptedBytes);
         const fileSize = await getFileSize(resolvedOutput);
@@ -313,10 +320,10 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_add_page_numbers ────────────────────────────────────────────
@@ -452,10 +459,10 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_embed_qr_code ───────────────────────────────────────────────
@@ -484,20 +491,25 @@ export function registerManipulateTools(server: McpServer): void {
             .int()
             .min(1)
             .describe("Target page number (1-indexed)"),
-          x: z
-            .number()
-            .describe("X position in points from the left edge"),
-          y: z
-            .number()
-            .describe("Y position in points from the bottom edge"),
+          x: z.number().describe("X position in points from the left edge"),
+          y: z.number().describe("Y position in points from the bottom edge"),
           size: z
             .number()
             .min(10)
             .max(1000)
             .optional()
-            .describe("Size of the QR code/barcode in points. Defaults to 100."),
+            .describe(
+              "Size of the QR code/barcode in points. Defaults to 100.",
+            ),
           type: z
-            .enum(["qrcode", "code128", "datamatrix", "ean13", "pdf417", "azteccode"])
+            .enum([
+              "qrcode",
+              "code128",
+              "datamatrix",
+              "ean13",
+              "pdf417",
+              "azteccode",
+            ])
             .optional()
             .describe("Barcode type. Defaults to qrcode."),
         })
@@ -531,7 +543,7 @@ export function registerManipulateTools(server: McpServer): void {
 
         if (page > totalPages) {
           return toolError(
-            `Page ${page} exceeds document length (${totalPages} pages).`
+            `Page ${page} exceeds document length (${totalPages} pages).`,
           );
         }
 
@@ -558,10 +570,10 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 
   // ── pdf_reorder_pages ───────────────────────────────────────────────
@@ -580,7 +592,7 @@ export function registerManipulateTools(server: McpServer): void {
             .string()
             .max(10000)
             .describe(
-              "New page order as comma-separated 1-indexed numbers, e.g. '3,1,2,4' or '1,1,2' (duplicates allowed)"
+              "New page order as comma-separated 1-indexed numbers, e.g. '3,1,2,4' or '1,1,2' (duplicates allowed)",
             ),
           outputPath: z
             .string()
@@ -611,21 +623,21 @@ export function registerManipulateTools(server: McpServer): void {
           const num = parseInt(part, 10);
           if (isNaN(num) || num < 1 || num > totalPages) {
             return toolError(
-              `Invalid page number: ${part}. Must be between 1 and ${totalPages}.`
+              `Invalid page number: ${part}. Must be between 1 and ${totalPages}.`,
             );
           }
           indices.push(num - 1); // Convert to 0-indexed
         }
 
         if (indices.length > 2000) {
-          return toolError('Page order exceeds maximum of 2000 output pages.');
+          return toolError("Page order exceeds maximum of 2000 output pages.");
         }
 
         const warnings: string[] = [];
         const formCheck = checkForFormFields(sourceDoc);
         if (formCheck.hasFields) {
           warnings.push(
-            `Warning: source PDF contains ${formCheck.fieldCount} form fields that were not preserved during reorder. Form data appears visually but is no longer interactive.`
+            `Warning: source PDF contains ${formCheck.fieldCount} form fields that were not preserved during reorder. Form data appears visually but is no longer interactive.`,
           );
         }
 
@@ -647,9 +659,9 @@ export function registerManipulateTools(server: McpServer): void {
         });
       } catch (error) {
         return toolError(
-          error instanceof Error ? error.message : String(error)
+          error instanceof Error ? error.message : String(error),
         );
       }
-    }
+    },
   );
 }

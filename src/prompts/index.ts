@@ -45,7 +45,11 @@ export function registerPrompts(server: McpServer): void {
         "",
         "```json",
         JSON.stringify(
-          { templateName: "invoice", data, outputPath: "<choose an output path>" },
+          {
+            templateName: "invoice",
+            data,
+            outputPath: "<choose an output path>",
+          },
           null,
           2,
         ),
@@ -55,7 +59,9 @@ export function registerPrompts(server: McpServer): void {
       ].join("\n");
 
       return {
-        messages: [{ role: "user" as const, content: { type: "text" as const, text } }],
+        messages: [
+          { role: "user" as const, content: { type: "text" as const, text } },
+        ],
       };
     },
   );
@@ -77,7 +83,11 @@ export function registerPrompts(server: McpServer): void {
         "",
         `**Step 1** — Discover the form fields:`,
         "```json",
-        JSON.stringify({ tool: "pdf_get_form_fields", filePath: pdf_path }, null, 2),
+        JSON.stringify(
+          { tool: "pdf_get_form_fields", filePath: pdf_path },
+          null,
+          2,
+        ),
         "```",
         "",
         `**Step 2** — Once you know the field names and types, fill them:`,
@@ -98,7 +108,9 @@ export function registerPrompts(server: McpServer): void {
       ].join("\n");
 
       return {
-        messages: [{ role: "user" as const, content: { type: "text" as const, text } }],
+        messages: [
+          { role: "user" as const, content: { type: "text" as const, text } },
+        ],
       };
     },
   );

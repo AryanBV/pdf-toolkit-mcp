@@ -5,3 +5,14 @@ export const MAX_MERGE_FILES = 50;
 export const SUPPORTED_IMAGE_FORMATS = ["image/png", "image/jpeg"] as const;
 export const MAX_PAGE_WARNING = 10_000;
 export const MAX_PAGE_NUMBER = 100_000;
+
+// Rendering limits (pdf_render_pages) — guard against memory blow-ups
+export const DEFAULT_RENDER_DPI = 150;
+export const MIN_RENDER_DPI = 36;
+export const MAX_RENDER_DPI = 300;
+export const MAX_RENDER_PAGES = 50;
+export const MAX_RENDER_DIMENSION = 5_000;
+
+// Text-extraction / search / markdown limits
+export const MAX_SEARCH_RESULTS = 500;
+export const MAX_MARKDOWN_INPUT_CHARS = 5_000_000;

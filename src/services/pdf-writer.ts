@@ -15,7 +15,7 @@ export async function createNewPdf(): Promise<PDFDocument> {
 
 export async function savePdf(
   pdfDoc: PDFDocument,
-  outputPath: string
+  outputPath: string,
 ): Promise<string> {
   pdfDoc.setProducer("@aryanbv/pdf-toolkit-mcp");
   const pdfBytes = await pdfDoc.save();
@@ -23,9 +23,10 @@ export async function savePdf(
   return outputPath;
 }
 
-export function checkForFormFields(
-  pdfDoc: PDFDocument
-): { hasFields: boolean; fieldCount: number } {
+export function checkForFormFields(pdfDoc: PDFDocument): {
+  hasFields: boolean;
+  fieldCount: number;
+} {
   try {
     const fields = pdfDoc.getForm().getFields();
     return { hasFields: fields.length > 0, fieldCount: fields.length };

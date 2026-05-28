@@ -6,10 +6,16 @@ import { registerReadTools } from "./tools/read.js";
 import { registerManipulateTools } from "./tools/manipulate.js";
 import { registerCreateTools } from "./tools/create.js";
 import { registerPrompts } from "./prompts/index.js";
+import { createRequire } from "node:module";
+
+// Single source of truth for the version — resolved from package.json at runtime
+// so it can never drift from the published package version.
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
 
 const server = new McpServer({
   name: "pdf-toolkit-mcp",
-  version: "0.2.3",
+  version,
 });
 
 registerReadTools(server);

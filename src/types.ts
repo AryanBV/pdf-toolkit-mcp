@@ -23,7 +23,13 @@ export interface PageText {
 
 export interface FormField {
   name: string;
-  type: "text" | "checkbox" | "dropdown" | "radiogroup" | "button" | "signature";
+  type:
+    | "text"
+    | "checkbox"
+    | "dropdown"
+    | "radiogroup"
+    | "button"
+    | "signature";
   value: string | boolean;
   required: boolean;
 }

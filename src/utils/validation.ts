@@ -8,7 +8,7 @@ export async function validatePdfPath(filePath: string): Promise<string> {
 
   if (extname(resolved).toLowerCase() !== ".pdf") {
     throw new Error(
-      `Not a PDF file: ${resolved}. File must have a .pdf extension.`
+      `Not a PDF file: ${resolved}. File must have a .pdf extension.`,
     );
   }
 
@@ -16,7 +16,7 @@ export async function validatePdfPath(filePath: string): Promise<string> {
     await access(resolved);
   } catch {
     throw new Error(
-      `File not found: ${resolved}. Check the path and try again.`
+      `File not found: ${resolved}. Check the path and try again.`,
     );
   }
 
@@ -25,27 +25,25 @@ export async function validatePdfPath(filePath: string): Promise<string> {
 
 export async function validateOutputPath(
   outputPath: string,
-  inputPath?: string
+  inputPath?: string,
 ): Promise<string> {
   const resolved = resolve(outputPath);
 
   if (extname(resolved).toLowerCase() !== ".pdf") {
-    throw new Error(
-      `Output path must have a .pdf extension: ${resolved}`
-    );
+    throw new Error(`Output path must have a .pdf extension: ${resolved}`);
   }
 
   try {
     await access(dirname(resolved));
   } catch {
     throw new Error(
-      `Output directory does not exist: ${dirname(resolved)}. Create the directory first.`
+      `Output directory does not exist: ${dirname(resolved)}. Create the directory first.`,
     );
   }
 
   if (inputPath && resolve(inputPath) === resolved) {
     throw new Error(
-      `Output path cannot be the same as input path: ${resolved}. Choose a different output path.`
+      `Output path cannot be the same as input path: ${resolved}. Choose a different output path.`,
     );
   }
 
@@ -58,7 +56,7 @@ export async function validateFontPath(filePath: string): Promise<string> {
 
   if (ext !== ".ttf" && ext !== ".otf") {
     throw new Error(
-      `Not a font file: ${resolved}. File must have a .ttf or .otf extension.`
+      `Not a font file: ${resolved}. File must have a .ttf or .otf extension.`,
     );
   }
 
@@ -66,7 +64,7 @@ export async function validateFontPath(filePath: string): Promise<string> {
     await access(resolved);
   } catch {
     throw new Error(
-      `File not found: ${resolved}. Check the path and try again.`
+      `File not found: ${resolved}. Check the path and try again.`,
     );
   }
 
@@ -79,7 +77,7 @@ export async function validateImagePath(filePath: string): Promise<string> {
 
   if (![".jpg", ".jpeg", ".png"].includes(ext)) {
     throw new Error(
-      `Unsupported image format: ${resolved}. Only JPEG (.jpg, .jpeg) and PNG (.png) files are supported.`
+      `Unsupported image format: ${resolved}. Only JPEG (.jpg, .jpeg) and PNG (.png) files are supported.`,
     );
   }
 
@@ -87,7 +85,7 @@ export async function validateImagePath(filePath: string): Promise<string> {
     await access(resolved);
   } catch {
     throw new Error(
-      `File not found: ${resolved}. Check the path and try again.`
+      `File not found: ${resolved}. Check the path and try again.`,
     );
   }
 
@@ -96,14 +94,14 @@ export async function validateImagePath(filePath: string): Promise<string> {
 
 export async function validateFileSize(
   filePath: string,
-  maxMb: number = MAX_FILE_SIZE_MB
+  maxMb: number = MAX_FILE_SIZE_MB,
 ): Promise<void> {
   const stats = await stat(filePath);
   const sizeMb = stats.size / (1024 * 1024);
 
   if (sizeMb > maxMb) {
     throw new Error(
-      `File too large: ${sizeMb.toFixed(1)} MB (limit: ${maxMb} MB). Use a smaller file or split it first.`
+      `File too large: ${sizeMb.toFixed(1)} MB (limit: ${maxMb} MB). Use a smaller file or split it first.`,
     );
   }
 }
@@ -114,7 +112,7 @@ export function toUint8Array(buffer: Buffer): Uint8Array {
 
 export function parsePageRange(
   rangeStr: string,
-  totalPages: number
+  totalPages: number,
 ): ParsedPageRange {
   const pages = new Set<number>();
   const segments = rangeStr.split(",").map((s) => s.trim());
@@ -124,7 +122,7 @@ export function parsePageRange(
       const parts = segment.split("-");
       if (parts.length !== 2) {
         throw new Error(
-          `Invalid page range format: "${segment}". Use "start-end" (e.g., "1-5").`
+          `Invalid page range format: "${segment}". Use "start-end" (e.g., "1-5").`,
         );
       }
 
@@ -133,31 +131,29 @@ export function parsePageRange(
 
       if (Number.isNaN(start) || Number.isNaN(end)) {
         throw new Error(
-          `Invalid page numbers in range: "${segment}". Pages must be integers.`
+          `Invalid page numbers in range: "${segment}". Pages must be integers.`,
         );
       }
 
       if (start < 1 || end < 1) {
-        throw new Error(
-          `Page numbers must be at least 1: "${segment}".`
-        );
+        throw new Error(`Page numbers must be at least 1: "${segment}".`);
       }
 
       if (start > MAX_PAGE_NUMBER || end > MAX_PAGE_NUMBER) {
         throw new Error(
-          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`
+          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`,
         );
       }
 
       if (start > end) {
         throw new Error(
-          `Invalid range: "${segment}". Start page must not exceed end page.`
+          `Invalid range: "${segment}". Start page must not exceed end page.`,
         );
       }
 
       if (start > totalPages || end > totalPages) {
         throw new Error(
-          `Page range "${segment}" exceeds document length (${totalPages} pages).`
+          `Page range "${segment}" exceeds document length (${totalPages} pages).`,
         );
       }
 
@@ -169,25 +165,23 @@ export function parsePageRange(
 
       if (Number.isNaN(page)) {
         throw new Error(
-          `Invalid page number: "${segment}". Pages must be integers.`
+          `Invalid page number: "${segment}". Pages must be integers.`,
         );
       }
 
       if (page < 1) {
-        throw new Error(
-          `Page numbers must be at least 1, got ${page}.`
-        );
+        throw new Error(`Page numbers must be at least 1, got ${page}.`);
       }
 
       if (page > MAX_PAGE_NUMBER) {
         throw new Error(
-          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`
+          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`,
         );
       }
 
       if (page > totalPages) {
         throw new Error(
-          `Page ${page} exceeds document length (${totalPages} pages).`
+          `Page ${page} exceeds document length (${totalPages} pages).`,
         );
       }
 

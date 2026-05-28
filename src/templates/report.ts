@@ -3,7 +3,9 @@ interface ReportSection {
   body: string;
 }
 
-export function buildReport(data: Record<string, unknown>): Record<string, unknown> {
+export function buildReport(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
   const title = String(data.title ?? "Report");
   const author = String(data.author ?? "");
   const date = String(data.date ?? new Date().toISOString().slice(0, 10));
@@ -21,11 +23,42 @@ export function buildReport(data: Record<string, unknown>): Record<string, unkno
   const content: unknown[] = [
     // Title page
     { text: "", margin: [0, 0, 0, 100] },
-    { text: title, fontSize: 32, bold: true, alignment: "center", color: "#2c3e50" },
-    ...(subtitle ? [{ text: subtitle, fontSize: 16, alignment: "center", color: "#666666", margin: [0, 10, 0, 0] }] : []),
+    {
+      text: title,
+      fontSize: 32,
+      bold: true,
+      alignment: "center",
+      color: "#2c3e50",
+    },
+    ...(subtitle
+      ? [
+          {
+            text: subtitle,
+            fontSize: 16,
+            alignment: "center",
+            color: "#666666",
+            margin: [0, 10, 0, 0],
+          },
+        ]
+      : []),
     { text: "", margin: [0, 0, 0, 40] },
-    ...(author ? [{ text: `Author: ${author}`, fontSize: 12, alignment: "center", color: "#888888" }] : []),
-    { text: `Date: ${date}`, fontSize: 12, alignment: "center", color: "#888888", margin: [0, 4, 0, 0] },
+    ...(author
+      ? [
+          {
+            text: `Author: ${author}`,
+            fontSize: 12,
+            alignment: "center",
+            color: "#888888",
+          },
+        ]
+      : []),
+    {
+      text: `Date: ${date}`,
+      fontSize: 12,
+      alignment: "center",
+      color: "#888888",
+      margin: [0, 4, 0, 0],
+    },
     { text: "", pageBreak: "after" },
     // Sections
     ...sections.flatMap((section, idx) => [

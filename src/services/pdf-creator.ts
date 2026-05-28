@@ -9,7 +9,6 @@ import { getFileSize } from "../utils/file-utils.js";
 // pdfmake and html-to-pdfmake are CJS packages — use createRequire()
 const require = createRequire(import.meta.url);
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const pdfMake: PdfMakeStatic = require("pdfmake/build/pdfmake");
 const pdfFonts: Record<string, string> = require("pdfmake/build/vfs_fonts");
 const htmlToPdfmake: HtmlToPdfmakeFn = require("html-to-pdfmake");
@@ -27,7 +26,7 @@ interface PdfMakeStatic {
 
 type HtmlToPdfmakeFn = (
   html: string,
-  options: { window: unknown }
+  options: { window: unknown },
 ) => unknown[];
 
 // Loose doc definition that works with html-to-pdfmake's dynamic output
@@ -69,14 +68,25 @@ const DEFAULT_STYLES: Record<string, Record<string, unknown>> = {
   "html-h4": { fontSize: 14, bold: true, marginBottom: 4, marginTop: 10 },
   "html-h5": { fontSize: 12, bold: true, marginBottom: 2, marginTop: 8 },
   "html-h6": { fontSize: 10, bold: true, marginBottom: 2, marginTop: 6 },
-  "html-code": { font: "Roboto", fontSize: 9, color: "#333333", background: "#f5f5f5" },
-  "html-pre": { font: "Roboto", fontSize: 9, color: "#333333", background: "#f5f5f5", margin: [0, 8, 0, 8] },
+  "html-code": {
+    font: "Roboto",
+    fontSize: 9,
+    color: "#333333",
+    background: "#f5f5f5",
+  },
+  "html-pre": {
+    font: "Roboto",
+    fontSize: 9,
+    color: "#333333",
+    background: "#f5f5f5",
+    margin: [0, 8, 0, 8],
+  },
 };
 
 // ── Public API ──────────────────────────────────────────────────────────
 
 export async function createFromMarkdown(
-  options: CreateFromMarkdownOptions
+  options: CreateFromMarkdownOptions,
 ): Promise<CreateResult> {
   const {
     markdown,
@@ -149,7 +159,7 @@ export async function createFromMarkdown(
 
 export async function renderDocDefinition(
   docDefinition: PdfDocDefinition,
-  outputPath: string
+  outputPath: string,
 ): Promise<CreateResult> {
   // Ensure producer metadata (Rule 18)
   if (!docDefinition.info) {
