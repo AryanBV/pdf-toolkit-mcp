@@ -156,7 +156,101 @@ describe("pdf_encrypt (AES-256) / pdf_compare / pdf_embed_qr_code bounds", () =>
     expect(payload.differences[0].page).toBe(2);
     expect(payload.differences[0].added).toContain("Changed second");
     expect(payload.differences[0].removed).toContain("Original second");
+    // Same page count → not truncated, and the same-layout scope note is present.
+    expect(payload.truncated).toBe(false);
+    expect(payload.differingPageCount).toBe(1);
+    expect(payload.note).toMatch(/content-stream-order/i);
+    expect(payload.note).toMatch(/same-layout/i);
   }, 30_000);
+
+  // ── pdf_compare: page-alignment caveat surfaces on differing page counts ──
+  it("surfaces the absolute-page-index alignment caveat when page counts differ", async () => {
+    const a = join(workDir, "align-a.pdf");
+    const b = join(workDir, "align-b.pdf");
+    // B has an extra page inserted at the front, so every page shifts: absolute
+    // index alignment must report this rather than silently mis-pairing pages.
+    await writeFile(a, await makePdf(["Alpha page", "Beta page"]));
+    await writeFile(
+      b,
+      await makePdf(["Inserted intro", "Alpha page", "Beta page"]),
+    );
+
+    const result = (await client.callTool({
+      name: "pdf_compare",
+      arguments: { filePathA: a, filePathB: b },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.pageCountA).toBe(2);
+    expect(payload.pageCountB).toBe(3);
+    expect(payload.identical).toBe(false);
+    // The note must explicitly warn that page counts differ and that alignment
+    // is by absolute page index (the insert/delete cascade caveat).
+    expect(payload.note).toMatch(/page counts differ/i);
+    expect(payload.note).toMatch(/absolute page index/i);
+  }, 30_000);
+
+  // ── pdf_compare: large diffs are trimmed honestly (valid JSON, not sliced) ──
+  it("trims a large diff honestly with truncated:true and valid JSON", async () => {
+    const a = join(workDir, "big-a.pdf");
+    const b = join(workDir, "big-b.pdf");
+
+    // Build two many-page PDFs where every page differs, and each page carries a
+    // large block of text so the serialized differences array blows past the
+    // CHARACTER_LIMIT (25,000). A naive byte-slice would corrupt the JSON; the
+    // honest array-trim must keep the response parseable and report the drop.
+    // pdf.js drops text drawn off the page edge, so a single overflowing line
+    // extracts to only ~50 chars — far too small to ever exceed the diff budget.
+    // Build DENSE pages instead: many short lines that all sit WITHIN the page,
+    // fully different per side, so every page yields a large extractable diff and
+    // the honest array-trim path actually runs.
+    const pageCount = 40;
+    const linesPerPage = 25;
+    const buildDense = async (tag: "A" | "B"): Promise<Uint8Array> => {
+      const doc = await pdfLib.PDFDocument.create();
+      const word = tag === "A" ? "alpha" : "omega";
+      for (let p = 0; p < pageCount; p++) {
+        const page = doc.addPage([300, 400]);
+        for (let j = 0; j < linesPerPage; j++) {
+          page.drawText(`${tag}-p${p}-l${j}-${word}-${word}`, {
+            x: 15,
+            y: 385 - j * 14,
+            size: 9,
+          });
+        }
+      }
+      return doc.save();
+    };
+    await writeFile(a, await buildDense("A"));
+    await writeFile(b, await buildDense("B"));
+
+    const result = (await client.callTool({
+      name: "pdf_compare",
+      arguments: { filePathA: a, filePathB: b },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const raw = textOf(result);
+
+    // The response must be valid JSON — proves the diff array was trimmed, NOT
+    // byte-sliced (a slice mid-string would throw here).
+    const payload = JSON.parse(raw);
+
+    expect(payload.identical).toBe(false);
+    // Every page differs, so the TRUE count is the full page count…
+    expect(payload.differingPageCount).toBe(pageCount);
+    // …but the returned array is trimmed to fit, and the flag/note say so.
+    expect(payload.truncated).toBe(true);
+    expect(payload.differences.length).toBeLessThan(pageCount);
+    expect(payload.differences.length).toBeGreaterThan(0);
+    expect(payload.truncationNote).toMatch(
+      /Showing \d+ of \d+ differing pages/,
+    );
+    expect(payload.truncationNote).toMatch(/omitted/i);
+    // The serialized differences must stay within the response character limit.
+    expect(raw.length).toBeLessThanOrEqual(25_000);
+  }, 60_000);
 
   // ── pdf_embed_qr_code bounds ────────────────────────────────────────
   it("rejects a QR placement that falls off the page (INVALID_INPUT)", async () => {

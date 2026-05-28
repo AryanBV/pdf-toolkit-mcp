@@ -132,30 +132,30 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 22 tools organized by category:
 
-| Category       | Tool                       | Description                                                                  |
-| -------------- | -------------------------- | ---------------------------------------------------------------------------- |
-| **Read**       | `pdf_extract_text`         | Extract text from PDF pages (first 10 by default)                            |
-|                | `pdf_get_metadata`         | Get title, author, subject, page count, dates, producer, file size           |
-|                | `pdf_get_form_fields`      | List form fields with names, types, values, and required status              |
-|                | `pdf_to_markdown`          | Convert a PDF to reading-order Markdown (columns, headings, lists)           |
-|                | `pdf_search`               | Find text across pages; returns page numbers and snippets (literal or regex) |
-|                | `pdf_compare`              | Page-by-page text diff between two PDFs                                      |
-| **Manipulate** | `pdf_merge`                | Merge multiple PDFs into one (preserves form fields)                         |
-|                | `pdf_split`                | Extract page ranges into a new PDF (preserves form fields)                   |
-|                | `pdf_delete_pages`         | Delete a page range, keeping the rest (preserves form fields)                |
-|                | `pdf_reorder_pages`        | Reorder pages in any order (duplicates allowed; preserves form fields)       |
-|                | `pdf_rotate_pages`         | Rotate pages by 90, 180, or 270 degrees                                      |
-|                | `pdf_flatten`              | Bake form-field values into static content (remove interactivity)            |
-|                | `pdf_encrypt`              | AES-256 password protection with user/owner passwords                        |
-| **Create**     | `pdf_create`               | Create new PDF from text content                                             |
-|                | `pdf_create_from_markdown` | Create rich PDF from Markdown (headings, tables, lists, code blocks)         |
-|                | `pdf_create_from_template` | Create PDF from template (invoice, report, letter)                           |
-|                | `pdf_fill_form`            | Fill form fields (text, checkbox, dropdown, radio)                           |
-|                | `pdf_add_watermark`        | Add text watermark to pages                                                  |
-|                | `pdf_add_page_numbers`     | Add page numbers (configurable position and format)                          |
-|                | `pdf_embed_image`          | Embed PNG or JPEG image into a page                                          |
-|                | `pdf_embed_qr_code`        | Embed QR code or barcode (Code128, DataMatrix, EAN-13, PDF417, Aztec)        |
-| **Render**     | `pdf_render_pages`         | Render pages to PNG/JPEG (or inline images) so a vision model can read them  |
+| Category       | Tool                       | Description                                                                   |
+| -------------- | -------------------------- | ----------------------------------------------------------------------------- |
+| **Read**       | `pdf_extract_text`         | Extract text from PDF pages (first 10 by default)                             |
+|                | `pdf_get_metadata`         | Get title, author, subject, page count, dates, producer, file size            |
+|                | `pdf_get_form_fields`      | List form fields with names, types, values, and required status               |
+|                | `pdf_to_markdown`          | Convert a PDF to reading-order Markdown (columns, headings, lists)            |
+|                | `pdf_search`               | Find text across pages; returns page numbers and snippets (literal substring) |
+|                | `pdf_compare`              | Page-by-page text diff between two PDFs                                       |
+| **Manipulate** | `pdf_merge`                | Merge multiple PDFs into one (preserves form fields)                          |
+|                | `pdf_split`                | Extract page ranges into a new PDF (preserves form fields)                    |
+|                | `pdf_delete_pages`         | Delete a page range, keeping the rest (preserves form fields)                 |
+|                | `pdf_reorder_pages`        | Reorder pages in any order (duplicates allowed; preserves form fields)        |
+|                | `pdf_rotate_pages`         | Rotate pages by 90, 180, or 270 degrees                                       |
+|                | `pdf_flatten`              | Bake form-field values into static content (remove interactivity)             |
+|                | `pdf_encrypt`              | AES-256 password protection with user/owner passwords                         |
+| **Create**     | `pdf_create`               | Create new PDF from text content                                              |
+|                | `pdf_create_from_markdown` | Create rich PDF from Markdown (headings, tables, lists, code blocks)          |
+|                | `pdf_create_from_template` | Create PDF from template (invoice, report, letter)                            |
+|                | `pdf_fill_form`            | Fill form fields (text, checkbox, dropdown, radio)                            |
+|                | `pdf_add_watermark`        | Add text watermark to pages                                                   |
+|                | `pdf_add_page_numbers`     | Add page numbers (configurable position and format)                           |
+|                | `pdf_embed_image`          | Embed PNG or JPEG image into a page                                           |
+|                | `pdf_embed_qr_code`        | Embed QR code or barcode (Code128, DataMatrix, EAN-13, PDF417, Aztec)         |
+| **Render**     | `pdf_render_pages`         | Render pages to PNG/JPEG (or inline images) so a vision model can read them   |
 
 ## Templates
 
@@ -176,13 +176,14 @@ Generate professional documents from structured data:
       { "description": "Hosting (Annual)", "quantity": 1, "unitPrice": 299 }
     ],
     "taxRate": 18,
+    "currency": "USD",
     "paymentTerms": "Net 30"
   },
   "outputPath": "/path/to/invoice.pdf"
 }
 ```
 
-Available templates: `invoice`, `report`, `letter`.
+Available templates: `invoice`, `report`, `letter`. The `invoice` template accepts an optional `currency` field (defaults to `USD`) to control the currency label on amounts. Major symbols (`$ € £ ¥`) render directly; a currency whose symbol isn't representable in the invoice's Helvetica font (e.g. `INR`, `KRW`, `TRY`) safely renders as its ISO code instead (e.g. `INR 20.00`), so any currency works without error.
 
 ## Read Scanned & Image-Only PDFs (Vision)
 
@@ -232,12 +233,11 @@ Or write image files to disk (default 150 DPI, first 50 pages, PNG):
   "tool": "pdf_search",
   "filePath": "/path/to/contract.pdf",
   "query": "indemnification",
-  "regex": false,
   "caseSensitive": false
 }
 ```
 
-Returns matches with the page number and a surrounding snippet. Set `regex: true` to treat the query as a JavaScript regular expression.
+Returns matches with the page number and a surrounding snippet. Search is a literal, case-insensitive substring match by default (set `caseSensitive: true` for an exact-case match). Regular-expression search is intentionally not offered: an attacker-supplied pattern can trigger catastrophic backtracking (ReDoS) that cannot be interrupted in single-threaded JavaScript. Safe regex search is deferred to v1.1.
 
 > "What changed between v1.pdf and v2.pdf?"
 
@@ -348,10 +348,10 @@ Just ask naturally:
 - **Text extraction**: Returns PDF stream order, not visual reading order. Use `pdf_to_markdown` when reading order matters; raw `pdf_extract_text` may interleave multi-column layouts.
 - **Extract text / to Markdown**: Default to the first 10 pages to avoid exceeding LLM context. Request specific pages for longer documents.
 - **Markdown to PDF**: Supports CommonMark + GFM (headings, bold/italic, links, lists, tables, fenced code, blockquotes, rules). Raw HTML, GFM task-list checkbox state, footnotes, and code syntax highlighting are not supported.
-- **PDF to Markdown**: Best on clean digital PDFs; scanned/image-only or very complex layouts degrade — render those with `pdf_render_pages`.
+- **PDF to Markdown**: Best on clean digital PDFs; scanned/image-only or very complex layouts degrade — render those with `pdf_render_pages`. Tabular content is emitted as positioned text in reading order, not reconstructed as Markdown tables (table-structure recovery is out of scope).
 - **Compare**: Text-only diff; purely visual/layout changes that don't alter text are not detected.
-- **Image embedding**: Only JPEG and PNG formats are supported.
-- **Form filling**: Non-Latin characters (Arabic, CJK, Devanagari) require providing a custom font file (.ttf/.otf) via `fontPath`.
+- **Image embedding**: Only JPEG and PNG formats are supported. Placements that fall off the page are rejected with a coded error rather than silently clipped — choose coordinates and a size that fit within the page bounds.
+- **Form filling**: The built-in fonts are Latin-only (WinAnsi). For non-Latin text (Arabic, CJK, Devanagari, etc.), pass a custom font file (.ttf/.otf) via `fontPath` — it is embedded and applied to the filled field appearances so the glyphs render correctly.
 - **Created-PDF fonts**: Markdown/template PDFs use Helvetica by default (custom TTF via `Font.register`).
 
 ## Tech Stack

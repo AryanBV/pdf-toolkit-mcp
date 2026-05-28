@@ -226,34 +226,34 @@ See `src/services/pdf-writer.ts` for the canonical example. All files that impor
 
 ## 6. Tools Reference
 
-| Tool                       | File                  | Library                        | Type  | Description                                                                                                |
-| -------------------------- | --------------------- | ------------------------------ | ----- | ---------------------------------------------------------------------------------------------------------- |
-| `pdf_extract_text`         | `tools/read.ts`       | unpdf                          | Read  | Extract text from PDF pages (default: first 10)                                                            |
-| `pdf_get_metadata`         | `tools/read.ts`       | @pdfme/pdf-lib                 | Read  | Get title, author, subject, page count, dates, producer, fileSize                                          |
-| `pdf_get_form_fields`      | `tools/read.ts`       | @pdfme/pdf-lib                 | Read  | List form fields with names, types, values, required (surfaces `CORRUPT_PDF` on broken forms)              |
-| `pdf_to_markdown`          | `tools/read.ts`       | unpdf + mdast-util-to-markdown | Read  | Convert a PDF to reading-order Markdown (column clustering, heading inference, list detection)             |
-| `pdf_search`               | `tools/read.ts`       | unpdf                          | Read  | Find text across pages, returning page numbers + snippets (literal or `regex`, case-insensitive default)   |
-| `pdf_merge`                | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Merge multiple PDFs into one; preserves AcroForm fields (namespaces collisions), optional `flatten`        |
-| `pdf_split`                | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Extract page ranges into a new PDF; preserves AcroForm fields on extracted pages, optional `flatten`       |
-| `pdf_rotate_pages`         | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Rotate specified pages by 90/180/270 degrees (additive to existing rotation)                               |
-| `pdf_encrypt`              | `tools/manipulate.ts` | @neslinesli93/qpdf-wasm        | Write | Encrypt PDF with AES-256 user/owner passwords                                                              |
-| `pdf_compare`              | `tools/manipulate.ts` | unpdf + diff                   | Read  | Page-by-page text diff between two PDFs (returns `identical:true` when text matches)                       |
-| `pdf_add_page_numbers`     | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Add page numbers at configurable position, format, start number, and font size                             |
-| `pdf_embed_qr_code`        | `tools/manipulate.ts` | @bwip-js/node + @pdfme/pdf-lib | Write | Embed QR/barcode into a page (rejects off-page placements instead of clipping)                             |
-| `pdf_reorder_pages`        | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Reorder pages (duplicates allowed); preserves AcroForm fields, optional `flatten`                          |
-| `pdf_delete_pages`         | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Delete a page range, keeping the rest; preserves AcroForm fields, optional `flatten`                       |
-| `pdf_create`               | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Create new PDF from text content (auto wrap + page overflow)                                               |
-| `pdf_fill_form`            | `tools/create.ts`     | @pdfme/pdf-lib + fontkit       | Write | Fill PDF form fields (supports non-Latin via `fontPath`, optional `flatten`)                               |
-| `pdf_add_watermark`        | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Add text watermark to all or specified pages                                                               |
-| `pdf_embed_image`          | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Embed PNG/JPEG image into a PDF page                                                                       |
-| `pdf_create_from_markdown` | `tools/create.ts`     | @react-pdf/renderer + remark   | Write | Create rich PDF from Markdown (CommonMark + GFM: headings, tables, lists, code, blockquotes)               |
-| `pdf_create_from_template` | `tools/create.ts`     | @react-pdf/renderer            | Write | Create PDF from named template (invoice, report, letter); `data` is Zod-validated                          |
-| `pdf_flatten`              | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Bake form-field values into static content, removing interactivity                                         |
-| `pdf_render_pages`         | `tools/render.ts`     | @hyzyla/pdfium + pngjs/jpeg-js | Write | Render pages to PNG/JPEG files (or `inline:true` image blocks for vision) so clients can read scanned PDFs |
+| Tool                       | File                  | Library                        | Type  | Description                                                                                                                               |
+| -------------------------- | --------------------- | ------------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `pdf_extract_text`         | `tools/read.ts`       | unpdf                          | Read  | Extract text from PDF pages (default: first 10)                                                                                           |
+| `pdf_get_metadata`         | `tools/read.ts`       | @pdfme/pdf-lib                 | Read  | Get title, author, subject, page count, dates, producer, fileSize                                                                         |
+| `pdf_get_form_fields`      | `tools/read.ts`       | @pdfme/pdf-lib                 | Read  | List form fields with names, types, values, required (surfaces `CORRUPT_PDF` on broken forms)                                             |
+| `pdf_to_markdown`          | `tools/read.ts`       | unpdf + mdast-util-to-markdown | Read  | Convert a PDF to reading-order Markdown (column clustering, heading inference, list detection)                                            |
+| `pdf_search`               | `tools/read.ts`       | unpdf                          | Read  | Find text across pages, returning page numbers + snippets (literal substring, case-insensitive default; no regex — see Known Limitations) |
+| `pdf_merge`                | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Merge multiple PDFs into one; preserves AcroForm fields (namespaces collisions), optional `flatten`                                       |
+| `pdf_split`                | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Extract page ranges into a new PDF; preserves AcroForm fields on extracted pages, optional `flatten`                                      |
+| `pdf_rotate_pages`         | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Rotate specified pages by 90/180/270 degrees (additive to existing rotation)                                                              |
+| `pdf_encrypt`              | `tools/manipulate.ts` | @neslinesli93/qpdf-wasm        | Write | Encrypt PDF with AES-256 user/owner passwords                                                                                             |
+| `pdf_compare`              | `tools/manipulate.ts` | unpdf + diff                   | Read  | Page-by-page text diff between two PDFs (returns `identical:true` when text matches)                                                      |
+| `pdf_add_page_numbers`     | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Add page numbers at configurable position, format, start number, and font size                                                            |
+| `pdf_embed_qr_code`        | `tools/manipulate.ts` | @bwip-js/node + @pdfme/pdf-lib | Write | Embed QR/barcode into a page (rejects off-page placements instead of clipping)                                                            |
+| `pdf_reorder_pages`        | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Reorder pages (duplicates allowed); preserves AcroForm fields, optional `flatten`                                                         |
+| `pdf_delete_pages`         | `tools/manipulate.ts` | @pdfme/pdf-lib                 | Write | Delete a page range, keeping the rest; preserves AcroForm fields, optional `flatten`                                                      |
+| `pdf_create`               | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Create new PDF from text content (auto wrap + page overflow)                                                                              |
+| `pdf_fill_form`            | `tools/create.ts`     | @pdfme/pdf-lib + fontkit       | Write | Fill PDF form fields (supports non-Latin via `fontPath`, optional `flatten`)                                                              |
+| `pdf_add_watermark`        | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Add text watermark to all or specified pages                                                                                              |
+| `pdf_embed_image`          | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Embed PNG/JPEG image into a PDF page                                                                                                      |
+| `pdf_create_from_markdown` | `tools/create.ts`     | @react-pdf/renderer + remark   | Write | Create rich PDF from Markdown (CommonMark + GFM: headings, tables, lists, code, blockquotes)                                              |
+| `pdf_create_from_template` | `tools/create.ts`     | @react-pdf/renderer            | Write | Create PDF from named template (invoice, report, letter); `data` is Zod-validated                                                         |
+| `pdf_flatten`              | `tools/create.ts`     | @pdfme/pdf-lib                 | Write | Bake form-field values into static content, removing interactivity                                                                        |
+| `pdf_render_pages`         | `tools/render.ts`     | @hyzyla/pdfium + pngjs/jpeg-js | Write | Render pages to PNG/JPEG files (or `inline:true` image blocks for vision) so clients can read scanned PDFs                                |
 
 ## 7. Known Limitations
 
-These are inherent to the underlying libraries and cannot be worked around without switching libraries.
+Most of these are inherent to the underlying libraries and cannot be worked around without switching libraries; a few (e.g. no regex search, off-page rejection) are deliberate safety/correctness choices.
 
 1. **Form preservation has an honest fallback** — `pdf_merge`/`split`/`reorder`/`delete` carry AcroForm fields across via `copyPagesPreservingForms()` instead of dropping them. Fields whose names collide across inputs are auto-namespaced (per source document) and reported in `renamed`. Exotic or structurally unusual forms that cannot be safely reconstructed are dropped and listed in `dropped` rather than failing the whole operation — so the response is always truthful about what survived. Use `flatten:true` when you don't need interactivity.
 
@@ -261,7 +261,7 @@ These are inherent to the underlying libraries and cannot be worked around witho
 
 3. **Image embedding supports JPEG/PNG only** — `@pdfme/pdf-lib` can embed JPEG and PNG images. Other formats (WebP, GIF, TIFF, SVG) must be converted externally before embedding.
 
-4. **Standard fonts are WinAnsi-only (Latin)** — pdf-lib's built-in standard fonts (Helvetica, Times Roman, etc.) only support WinAnsi encoding (basic Latin characters). Non-Latin scripts (Arabic, CJK, Devanagari, etc.) in `pdf_fill_form` require fontkit with a `.ttf`/`.otf` font file via `fontPath`.
+4. **Standard fonts are WinAnsi-only (Latin); non-Latin needs `fontPath`** — pdf-lib's built-in standard fonts (Helvetica, Times Roman, etc.) only support WinAnsi encoding (basic Latin characters). For non-Latin scripts (Arabic, CJK, Devanagari, etc.) in `pdf_fill_form`, pass a `.ttf`/`.otf` font file via `fontPath`: it is embedded with fontkit and applied to the filled field appearances so the glyphs render correctly (the field's default appearance is rewritten to reference the embedded font).
 
 5. **`save()` does minimal compression** — pdf-lib's PDF serialization does not apply advanced compression (object streams, cross-reference compression). Output files may be larger than input. Meaningful compression requires external tools.
 
@@ -270,6 +270,14 @@ These are inherent to the underlying libraries and cannot be worked around witho
 7. **Encryption is AES-256, opaque to the toolkit** — `pdf_encrypt` uses AES-256 via `@neslinesli93/qpdf-wasm`. The other tools read/write unencrypted PDFs; an already-encrypted input surfaces an `ENCRYPTED_PDF` error rather than being silently mishandled.
 
 8. **react-pdf font + Markdown scope** — Created PDFs (`pdf_create_from_markdown`, `pdf_create_from_template`) use `@react-pdf/renderer` with Helvetica by default; custom fonts are supported via `Font.register` (not yet exposed as a tool parameter). Markdown supports CommonMark + GFM (headings, bold/italic, links, ordered/bullet lists, tables, fenced code blocks, blockquotes, horizontal rules) but NOT: raw/embedded HTML, GFM task-list checkbox state, footnotes, or code-block syntax highlighting.
+
+9. **`pdf_search` is literal substring only (no regex)** — search matches a literal, case-insensitive substring (set `caseSensitive:true` for exact case); there is no `regex` parameter. A user-supplied regular expression can trigger catastrophic backtracking (ReDoS) that single-threaded JavaScript cannot interrupt, so regex is intentionally withheld. Safe regex search (e.g. backed by a linear-time engine or a worker with a hard timeout) is deferred to v1.1.
+
+10. **`pdf_embed_image` rejects off-page placement** — if the requested position/size would place any part of the image outside the page bounds, the tool throws a coded error instead of silently clipping the image. Callers must supply coordinates and dimensions that fit within the target page.
+
+11. **`pdf_add_watermark` diagonal placement is centered** — diagonal watermarks are rotated about the watermark's own center and positioned at the page center, so the text is properly centered on the page rather than offset by the rotation pivot.
+
+12. **`pdf_to_markdown` does not reconstruct tables** — tabular regions are emitted as positioned text in reading order, not as GFM Markdown tables; table-structure recovery (cell/row inference) is out of scope.
 
 ## 8. Build & Test Commands
 

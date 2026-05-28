@@ -18,6 +18,55 @@ const h = React.createElement;
 const emptyToUndefined = (v: unknown): unknown =>
   v === "" || v === null ? undefined : v;
 
+// Maps common ISO 4217 currency codes to their display symbol. The `currency`
+// field accepts either a known code (e.g. "EUR", "INR") or a raw symbol/string
+// (e.g. "€", "kr") — anything not in this table is rendered verbatim, so any
+// currency is supported even if it isn't listed here.
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  CNY: "¥",
+  INR: "₹",
+  RUB: "₽",
+  KRW: "₩",
+  BRL: "R$",
+  CAD: "$",
+  AUD: "$",
+  CHF: "CHF",
+  SEK: "kr",
+  NOK: "kr",
+  DKK: "kr",
+  PLN: "zł",
+  ZAR: "R",
+  TRY: "₺",
+  MXN: "$",
+  SGD: "$",
+  HKD: "$",
+  NZD: "$",
+  THB: "฿",
+  AED: "د.إ",
+};
+
+// The invoice renders in Helvetica (WinAnsi), so only ASCII plus a few WinAnsi
+// currency glyphs can be drawn; a non-WinAnsi symbol (₹ ₩ ₺ ₽ ฿ zł د.إ …) would
+// throw "WinAnsi cannot encode" at render time. These are the safe non-ASCII ones.
+const WINANSI_SAFE_SYMBOLS = new Set(["€", "£", "¥", "¢"]);
+
+function currencySymbol(currency: string): string {
+  const trimmed = currency.trim();
+  const candidate = CURRENCY_SYMBOLS[trimmed.toUpperCase()] ?? trimmed;
+  const renderable = [...candidate].every(
+    (ch) => ch.charCodeAt(0) <= 0x7f || WINANSI_SAFE_SYMBOLS.has(ch),
+  );
+  if (renderable) return candidate;
+  // Non-WinAnsi symbol (e.g. ₹/₩/₺): fall back to the ASCII ISO code so the
+  // invoice renders (e.g. "INR 37.01") instead of throwing. Strip any residual
+  // non-ASCII so a raw non-WinAnsi symbol passed directly is also safe.
+  return trimmed.toUpperCase().replace(/[^\x20-\x7E]/g, "");
+}
+
 export const invoiceSchema = z
   .object({
     companyName: z.string().optional(),
@@ -29,6 +78,13 @@ export const invoiceSchema = z
     dueDate: z.string().optional(),
     notes: z.string().optional(),
     paymentTerms: z.string().optional(),
+    currency: z
+      .string()
+      .max(16)
+      .optional()
+      .describe(
+        'Currency as an ISO code (e.g. "USD", "EUR", "INR") or a raw symbol (e.g. "€"). Defaults to "USD" ($).',
+      ),
     taxRate: z.preprocess(
       emptyToUndefined,
       z.coerce.number().min(0).max(100).optional(),
@@ -91,7 +147,11 @@ export async function buildInvoice(
   const subtotal = roundCents(items.reduce((s, it) => s + it.lineTotal, 0));
   const tax = roundCents(subtotal * (taxRate / 100));
   const total = roundCents(subtotal + tax);
-  const money = (n: number): string => `$${n.toFixed(2)}`;
+  const symbol = currencySymbol(data.currency ?? "USD");
+  // A single-glyph symbol ($ € £ ¥) sits flush against the amount; a multi-char
+  // symbol or ISO-code fallback (CHF, kr, R$, INR) reads better with a space.
+  const moneySep = symbol.length > 1 ? " " : "";
+  const money = (n: number): string => `${symbol}${moneySep}${n.toFixed(2)}`;
 
   const styles = StyleSheet.create({
     page: {

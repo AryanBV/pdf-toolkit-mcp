@@ -133,6 +133,109 @@ async function makeManyMatchesPdf(
   return doc.save();
 }
 
+/** A single-page PDF that literally contains the regex metacharacter string. */
+async function makeMetaCharPdf(): Promise<Uint8Array> {
+  const doc = await pdfLib.PDFDocument.create();
+  const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
+  const page = doc.addPage([400, 200]);
+  page.drawText("The pattern (a+)+ is famous for ReDoS.", {
+    x: 20,
+    y: 150,
+    size: 12,
+    font,
+  });
+  return doc.save();
+}
+
+/**
+ * A two-column page: the left column's lines all sit at small x, the right
+ * column's at a large x, with a wide horizontal gutter between them. Reading
+ * order must emit the entire left column before the right column — NOT
+ * interleave them row-by-row (which raw stream order would do).
+ */
+async function makeTwoColumnPdf(): Promise<Uint8Array> {
+  const doc = await pdfLib.PDFDocument.create();
+  const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
+  const page = doc.addPage([600, 400]);
+  const h = page.getHeight();
+
+  const leftLines = ["leftone", "lefttwo", "leftthree"];
+  const rightLines = ["rightone", "righttwo", "rightthree"];
+
+  // Same y per row, but left column at x=40, right column at x=360 (wide gutter).
+  for (let i = 0; i < leftLines.length; i++) {
+    const y = h - 60 - i * 30;
+    page.drawText(leftLines[i], { x: 40, y, size: 12, font });
+    page.drawText(rightLines[i], { x: 360, y, size: 12, font });
+  }
+
+  return doc.save();
+}
+
+/**
+ * A heading-HEAVY page: five short 24pt heading lines plus one body paragraph
+ * of three 12pt lines. By ITEM COUNT the median font size is 24pt (a heading
+ * size) — the old median-baseline heuristic would treat 24pt as body text and
+ * FAIL to mark the headings (24 < 24 × 1.15). The modal (character-weighted)
+ * baseline correctly identifies 12pt as body (it carries far more text), so the
+ * 24pt lines are detected as headings. This is the FIX-2 regression fixture.
+ */
+async function makeHeadingHeavyPdf(): Promise<Uint8Array> {
+  const doc = await pdfLib.PDFDocument.create();
+  const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
+  const page = doc.addPage([500, 700]);
+  const h = page.getHeight();
+
+  const headings = [
+    "Section Alpha",
+    "Section Bravo",
+    "Section Charlie",
+    "Section Delta",
+    "Section Echo",
+  ];
+  let y = h - 50;
+  for (const heading of headings) {
+    page.drawText(heading, { x: 40, y, size: 24, font });
+    y -= 40;
+  }
+
+  // One body paragraph — three long 12pt lines carrying most of the characters.
+  const body = [
+    "This running body paragraph contains the bulk of the page text content.",
+    "It is set in a smaller twelve point font than every section heading above.",
+    "By character weight it is clearly the body, so headings must outrank it.",
+  ];
+  for (const line of body) {
+    page.drawText(line, { x: 40, y, size: 12, font });
+    y -= 20;
+  }
+
+  return doc.save();
+}
+
+/** A page containing a bullet list and an ordered list under a body line. */
+async function makeListPdf(): Promise<Uint8Array> {
+  const doc = await pdfLib.PDFDocument.create();
+  const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
+  const page = doc.addPage([400, 600]);
+  const h = page.getHeight();
+
+  const lines = [
+    "Shopping list for the week:",
+    "- apples",
+    "- bananas",
+    "- cherries",
+    "Steps to follow:",
+    "1. wash produce",
+    "2. chop produce",
+    "3. cook produce",
+  ];
+  for (let i = 0; i < lines.length; i++) {
+    page.drawText(lines[i], { x: 40, y: h - 60 - i * 28, size: 12, font });
+  }
+  return doc.save();
+}
+
 describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
   let client: Client;
   let transport: StdioClientTransport;
@@ -141,6 +244,10 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
   let formPath: string;
   let corruptFormPath: string;
   let manyMatchesPath: string;
+  let metaCharPath: string;
+  let twoColumnPath: string;
+  let listPath: string;
+  let headingHeavyPath: string;
 
   beforeAll(async () => {
     transport = new StdioClientTransport({
@@ -168,6 +275,18 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
       manyMatchesPath,
       await makeManyMatchesPdf("matchtoken", 700),
     );
+
+    metaCharPath = join(workDir, "metachar.pdf");
+    await writeFile(metaCharPath, await makeMetaCharPdf());
+
+    twoColumnPath = join(workDir, "two-column.pdf");
+    await writeFile(twoColumnPath, await makeTwoColumnPdf());
+
+    listPath = join(workDir, "lists.pdf");
+    await writeFile(listPath, await makeListPdf());
+
+    headingHeavyPath = join(workDir, "heading-heavy.pdf");
+    await writeFile(headingHeavyPath, await makeHeadingHeavyPdf());
   }, 30_000);
 
   afterAll(async () => {
@@ -201,6 +320,84 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
     expect(md).toMatch(/^#{1,3} Quarterly Report/m);
     // Body text should NOT be a heading.
     expect(md).not.toMatch(/^#{1,3} This document/m);
+  }, 30_000);
+
+  it("infers headings on a heading-heavy page (modal, not median, baseline)", async () => {
+    // The median font size on this page is a HEADING size (more heading lines
+    // than body lines by item count); only the modal (character-weighted)
+    // baseline correctly classifies the 24pt section lines as headings.
+    const result = (await client.callTool({
+      name: "pdf_to_markdown",
+      arguments: { filePath: headingHeavyPath },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const md = textOf(result);
+
+    // Every 24pt section line must become a Markdown heading.
+    expect(md).toMatch(/^#{1,3} Section Alpha$/m);
+    expect(md).toMatch(/^#{1,3} Section Echo$/m);
+
+    // The 12pt body lines must NOT be headings.
+    expect(md).not.toMatch(/^#{1,3} This running body paragraph/m);
+  }, 30_000);
+
+  it("documents the tables-not-reconstructed scope honestly in its description", async () => {
+    const tools = await client.listTools();
+    const toMarkdown = tools.tools.find((t) => t.name === "pdf_to_markdown");
+    expect(toMarkdown).toBeDefined();
+    // The description must honestly state that tables are not reconstructed as
+    // Markdown tables, so callers do not expect grid output.
+    expect(toMarkdown?.description?.toLowerCase()).toMatch(
+      /tables.*not.*reconstructed|not.*reconstructed.*table/,
+    );
+  }, 30_000);
+
+  it("emits two-column content in reading order (left column before right)", async () => {
+    const result = (await client.callTool({
+      name: "pdf_to_markdown",
+      arguments: { filePath: twoColumnPath },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const md = textOf(result);
+
+    // All six tokens must be present.
+    for (const token of [
+      "leftone",
+      "lefttwo",
+      "leftthree",
+      "rightone",
+      "righttwo",
+      "rightthree",
+    ]) {
+      expect(md).toContain(token);
+    }
+
+    // Reading order: the LAST left-column token must appear before the FIRST
+    // right-column token. Raw pdf.js stream order would interleave rows
+    // (leftone rightone lefttwo …); column reconstruction must not.
+    expect(md.indexOf("leftthree")).toBeLessThan(md.indexOf("rightone"));
+  }, 30_000);
+
+  it("detects bullet and ordered lists", async () => {
+    const result = (await client.callTool({
+      name: "pdf_to_markdown",
+      arguments: { filePath: listPath },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const md = textOf(result);
+
+    // Bullet items become Markdown "- " items.
+    expect(md).toMatch(/^- apples$/m);
+    expect(md).toMatch(/^- bananas$/m);
+    expect(md).toMatch(/^- cherries$/m);
+
+    // Ordered items keep their number and become "N. " items.
+    expect(md).toMatch(/^1\. wash produce$/m);
+    expect(md).toMatch(/^2\. chop produce$/m);
+    expect(md).toMatch(/^3\. cook produce$/m);
   }, 30_000);
 
   it("returns isError for a non-existent file", async () => {
@@ -275,49 +472,106 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
     expect(payload.results).toHaveLength(0);
   }, 30_000);
 
-  it("matches with a valid regex", async () => {
+  it("matches a multi-word literal substring", async () => {
     const result = (await client.callTool({
       name: "pdf_search",
-      arguments: { filePath: pdfPath, query: "ap\\w+ot", regex: true },
+      arguments: { filePath: pdfPath, query: "apricot harvest" },
     })) as ToolResultLike;
 
     expect(result.isError).toBeFalsy();
     const payload = JSON.parse(textOf(result));
     expect(payload.totalMatches).toBeGreaterThanOrEqual(1);
+    expect(payload.results[0].context.toLowerCase()).toContain(
+      "apricot harvest",
+    );
   }, 30_000);
 
-  it("returns INVALID_INPUT for an invalid regex", async () => {
-    const result = (await client.callTool({
-      name: "pdf_search",
-      arguments: { filePath: pdfPath, query: "(unclosed", regex: true },
-    })) as ToolResultLike;
+  // ── pdf_search: literal-only / ReDoS-proof + JSON-safe trim (READ-01/03) ──
 
-    expect(result.isError).toBe(true);
-    const text = textOf(result);
-    expect(text).toContain("INVALID_INPUT");
-    expect(text).not.toMatch(STACK_FRAME_RE);
+  it("rejects the removed `regex` parameter (.strict schema)", async () => {
+    // pdf_search is literal-only for v1.0; the regex switch was removed. The
+    // .strict() Zod schema must reject any caller still passing it rather than
+    // silently ignoring it. Depending on the SDK version a rejected input
+    // surfaces either as a thrown protocol error or an isError tool result;
+    // both are acceptable — what matters is it is NOT silently accepted.
+    let rejected = false;
+    try {
+      const result = (await client.callTool({
+        name: "pdf_search",
+        arguments: { filePath: pdfPath, query: "apricot", regex: true },
+      })) as ToolResultLike;
+      if (result.isError) {
+        rejected = true;
+        expect(textOf(result)).not.toMatch(STACK_FRAME_RE);
+      }
+    } catch {
+      // Schema validation rejected the call at the protocol layer.
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
   }, 30_000);
 
-  // ── pdf_search: ReDoS budget + JSON-safe trimming (READ-01 / READ-03) ──
+  it("still removes the `regex` field from the published input schema", async () => {
+    const tools = await client.listTools();
+    const search = tools.tools.find((t) => t.name === "pdf_search");
+    expect(search).toBeDefined();
+    const props = (search?.inputSchema?.properties ?? {}) as Record<
+      string,
+      unknown
+    >;
+    // The regex switch is gone; literal-only search has no such parameter.
+    expect(props.regex).toBeUndefined();
+    expect(props.query).toBeDefined();
+    expect(props.caseSensitive).toBeDefined();
+  }, 30_000);
 
-  it("terminates (does not hang) on a zero-width-matching regex", async () => {
-    // A global regex that can match the empty string would loop forever without
-    // the zero-width advance guard. The call must return a normal result, not
-    // hang the single-threaded stdio server. The tight per-call assertion below
-    // (well under the 30s test timeout) is the real anti-hang signal.
+  it("treats regex metacharacters as literal text and returns promptly", async () => {
+    // The classic catastrophic-backtracking pattern "(a+)+" must be matched as
+    // the literal 5-character string, never compiled as a regex. The fixture
+    // contains no such string, so totalMatches is 0 — and crucially the call
+    // returns near-instantly because there is no user-controlled pattern that
+    // could ReDoS the single-threaded stdio server.
     const start = Date.now();
     const result = (await client.callTool({
       name: "pdf_search",
-      arguments: { filePath: pdfPath, query: "a*", regex: true },
+      arguments: { filePath: pdfPath, query: "(a+)+" },
     })) as ToolResultLike;
     const elapsed = Date.now() - start;
 
     expect(result.isError).toBeFalsy();
     const payload = JSON.parse(textOf(result));
-    expect(typeof payload.totalMatches).toBe("number");
-    // Should complete fast; the time-budget guard caps the worst case at ~1.5s
-    // of scanning, so even with stdio overhead this stays far below the timeout.
+    expect(payload.totalMatches).toBe(0);
     expect(elapsed).toBeLessThan(10_000);
+  }, 30_000);
+
+  it("finds a literal metacharacter string when present in the text", async () => {
+    // Proves the escape path is exact: searching for "(a+)+" matches the
+    // literal "(a+)+" that the metacharacter fixture actually contains.
+    const result = (await client.callTool({
+      name: "pdf_search",
+      arguments: { filePath: metaCharPath, query: "(a+)+" },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.totalMatches).toBeGreaterThanOrEqual(1);
+    expect(payload.results[0].context).toContain("(a+)+");
+  }, 30_000);
+
+  it("treats a leading-dot wildcard query as a literal, not 'any character'", async () => {
+    // A bare "." would match every character if interpreted as a regex. As a
+    // literal it must only match actual period characters. The doc fixture has
+    // sentences ending in ".", so there are matches — but far fewer than the
+    // total character count, and a non-period query like "x" elsewhere is
+    // unaffected. We assert the literal "." matches and metachar ".*" does not.
+    const wildcard = (await client.callTool({
+      name: "pdf_search",
+      arguments: { filePath: pdfPath, query: ".*" },
+    })) as ToolResultLike;
+
+    expect(wildcard.isError).toBeFalsy();
+    // ".*" never appears literally in the fixture, so zero matches.
+    expect(JSON.parse(textOf(wildcard)).totalMatches).toBe(0);
   }, 30_000);
 
   it("does not hang while scanning a large body and returns valid JSON", async () => {

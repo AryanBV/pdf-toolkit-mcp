@@ -25,7 +25,23 @@ import {
 } from "../utils/validation.js";
 import { PdfError, toolSuccess, toErrorResult } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
-import { MAX_MERGE_FILES, MAX_PAGE_WARNING } from "../constants.js";
+import {
+  MAX_MERGE_FILES,
+  MAX_PAGE_WARNING,
+  CHARACTER_LIMIT,
+} from "../constants.js";
+
+/**
+ * Character budget for the COMPACT-serialized `differences` array in
+ * pdf_compare. Held well under CHARACTER_LIMIT for two reasons: (1) the
+ * surrounding metadata (page counts, notes, flags) and (2) pretty-print
+ * inflation — toolSuccess emits JSON.stringify(data, null, 2), which adds
+ * indentation the compact length we measure here does not account for. The
+ * generous reserve guarantees the final pretty-printed response stays within
+ * CHARACTER_LIMIT, so the diff list is trimmed honestly (with an explicit
+ * truncation note) rather than byte-sliced into invalid JSON.
+ */
+const COMPARE_DIFF_CHAR_BUDGET = CHARACTER_LIMIT - 5_000;
 
 /** Empty form report used as the seed for aggregation. */
 function emptyFormReport(): FormCopyReport {
@@ -374,7 +390,7 @@ export function registerManipulateTools(server: McpServer): void {
     "pdf_compare",
     {
       description:
-        "Compare the extracted text of two PDFs page by page and report the differences. Returns identical:true when the text matches. Compares text only — visual/layout changes that don't alter text are not detected.",
+        "Compare two PDFs page by page (by absolute page index) and report text differences. Returns identical:true when text matches. Diffs content-stream-order text (not visual reading order), so it is best for same-layout documents; reflowed or multi-column PDFs produce noisy diffs. Inserting/deleting a page shifts all later pages and reports them as changed. Large diffs are trimmed (truncated:true) to fit the response limit.",
       inputSchema: z
         .object({
           filePathA: z
@@ -454,12 +470,65 @@ export function registerManipulateTools(server: McpServer): void {
           });
         }
 
+        const totalDifferingPages = differences.length;
+
+        // Honest size accounting: the diff payload can grow without bound (one
+        // entry per differing page, each carrying full added/removed text), so
+        // trim the ARRAY to a character budget instead of letting toolSuccess
+        // silently byte-slice the JSON (which would corrupt it). We grow the
+        // returned list one entry at a time, tracking the serialized length
+        // incrementally (linear, not quadratic), until the next entry would
+        // exceed the budget — then report exactly how many were dropped.
+        const includedDifferences: typeof differences = [];
+        let truncated = false;
+        // Running length of JSON.stringify(includedDifferences). Starts at 2
+        // for the empty array "[]"; each appended entry adds its serialization
+        // plus a "," separator after the first.
+        let serializedLength = 2;
+        for (const diff of differences) {
+          const entryLength = JSON.stringify(diff).length;
+          const separator = includedDifferences.length > 0 ? 1 : 0;
+          const projected = serializedLength + separator + entryLength;
+          if (projected > COMPARE_DIFF_CHAR_BUDGET) {
+            // Always keep at least one concrete difference, even if that single
+            // oversized entry alone exceeds the budget, so the caller never gets
+            // an empty list while truncated:true.
+            if (includedDifferences.length === 0) {
+              includedDifferences.push(diff);
+              serializedLength = projected;
+            }
+            truncated = totalDifferingPages > includedDifferences.length;
+            break;
+          }
+          includedDifferences.push(diff);
+          serializedLength = projected;
+        }
+
+        const droppedDifferences =
+          totalDifferingPages - includedDifferences.length;
+
+        // Page-alignment is by absolute index, so a differing page count almost
+        // always means pages were inserted/deleted and every later page will
+        // diff. Surface that explicitly rather than burying it in a long list.
+        const note =
+          pageCountA === pageCountB
+            ? "Diff is by content-stream-order text (not visual reading order) and by absolute page index; best for same-layout documents."
+            : `Page counts differ (A=${pageCountA}, B=${pageCountB}): comparison aligns by absolute page index, so inserted/deleted pages shift all later pages and report as changed. Diff is by content-stream-order text (not visual reading order); best for same-layout documents.`;
+
         return toolSuccess({
-          identical: differences.length === 0,
+          identical: totalDifferingPages === 0,
           pageCountA,
           pageCountB,
           comparedPages: pages ?? "all",
-          differences,
+          differingPageCount: totalDifferingPages,
+          truncated,
+          ...(truncated
+            ? {
+                truncationNote: `Showing ${includedDifferences.length} of ${totalDifferingPages} differing pages; ${droppedDifferences} omitted to fit the response limit. Use the 'pages' range to compare smaller sections.`,
+              }
+            : {}),
+          note,
+          differences: includedDifferences,
         });
       } catch (error) {
         return toErrorResult(error);

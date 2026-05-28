@@ -1,7 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { PDFFont } from "@pdfme/pdf-lib";
+import type {
+  PDFFont,
+  PDFTextField as PdfLibTextField,
+  PDFDropdown as PdfLibDropdown,
+  PDFOptionList as PdfLibOptionList,
+} from "@pdfme/pdf-lib";
 import pdfLib from "@pdfme/pdf-lib";
 import { z } from "zod";
 import {
@@ -107,7 +112,7 @@ export function registerCreateTools(server: McpServer): void {
     "pdf_create",
     {
       description:
-        "Create a new PDF from text content with automatic line wrapping and page overflow. Supports A4, Letter, and Legal page sizes.",
+        "Create a new PDF from text content with automatic line wrapping and page overflow. Supports A4, Letter, and Legal page sizes. Provide fontPath for non-Latin text (Arabic, CJK, etc.).",
       inputSchema: z
         .object({
           outputPath: z
@@ -145,6 +150,13 @@ export function registerCreateTools(server: McpServer): void {
             .max(500)
             .optional()
             .describe("Page margin in points (0–500). Defaults to 50."),
+          fontPath: z
+            .string()
+            .max(4096)
+            .optional()
+            .describe(
+              "Absolute path to a .ttf/.otf font file for non-Latin character support (Arabic, CJK, etc.). The built-in font is Latin-only.",
+            ),
         })
         .strict(),
       annotations: {
@@ -162,6 +174,7 @@ export function registerCreateTools(server: McpServer): void {
       pageSize,
       fontSize,
       margin,
+      fontPath,
     }) => {
       try {
         const resolvedOutput = await validateOutputPath(outputPath);
@@ -177,12 +190,40 @@ export function registerCreateTools(server: McpServer): void {
         if (title) pdfDoc.setTitle(title);
         if (author) pdfDoc.setAuthor(author);
 
-        const font = await pdfDoc.embedFont(pdfLib.StandardFonts.Helvetica);
-        const maxWidth = pageWidth - 2 * marg;
-
         // Parse escape sequences (LLMs send literal \n and \t)
         let textContent = content.replace(/\\n/g, "\n");
         textContent = textContent.replace(/\\t/g, "\t");
+
+        let font: PDFFont;
+        if (fontPath) {
+          // Custom font: embed via fontkit so non-Latin scripts render.
+          const resolvedFontPath = await validateFontPath(fontPath);
+          await validateFileSize(resolvedFontPath);
+          const fontBuffer = await readFile(resolvedFontPath);
+          const fontBytes = toUint8Array(fontBuffer);
+
+          const fontkit = await import("fontkit");
+          pdfDoc.registerFontkit(
+            fontkit as unknown as Parameters<typeof pdfDoc.registerFontkit>[0],
+          );
+          font = await pdfDoc.embedFont(fontBytes);
+        } else {
+          // Built-in Helvetica is WinAnsi-only. Guard non-Latin content with a
+          // clear, coded error instead of letting pdf-lib throw a cryptic
+          // encoding failure deep inside drawText.
+          const hasNonLatin = [...textContent].some(
+            (ch) => ch.charCodeAt(0) > 255,
+          );
+          if (hasNonLatin) {
+            throw new PdfError(
+              "Content contains non-Latin characters. The built-in font supports Latin (WinAnsi) only — provide a fontPath pointing to a .ttf/.otf font file that supports these characters.",
+              "UNSUPPORTED_FORMAT",
+            );
+          }
+          font = await pdfDoc.embedFont(pdfLib.StandardFonts.Helvetica);
+        }
+
+        const maxWidth = pageWidth - 2 * marg;
 
         const wrappedLines = wrapText(textContent, font, fSize, maxWidth);
 
@@ -329,6 +370,13 @@ export function registerCreateTools(server: McpServer): void {
 
         const availableNames = allFields.map((f) => f.getName());
         let filledCount = 0;
+        // Deferred appearance-rebuilds for text/dropdown/option-list fields that
+        // received a custom font. Stored as closures so each runs AFTER all
+        // values are set (value-first, appearance-second ordering) and so the
+        // per-field `updateAppearances(font)` is dispatched against its own
+        // concrete type rather than a union. Checkboxes and radio groups render
+        // symbol glyphs (not text), so they neither accept nor need a font.
+        const rebuildAppearances: Array<() => void> = [];
 
         for (const [name, value] of Object.entries(fields)) {
           const field = allFields.find((f) => f.getName() === name);
@@ -340,10 +388,13 @@ export function registerCreateTools(server: McpServer): void {
           }
 
           if (field instanceof pdfLib.PDFTextField) {
-            if (customFont) {
-              field.updateAppearances(customFont);
-            }
+            // IMPORTANT: set the value FIRST. Generating appearances before the
+            // value is set renders an empty field and re-marks it dirty.
             field.setText(String(value));
+            if (customFont) {
+              const f: PdfLibTextField = field;
+              rebuildAppearances.push(() => f.updateAppearances(customFont));
+            }
           } else if (field instanceof pdfLib.PDFCheckBox) {
             if (value) {
               field.check();
@@ -352,8 +403,18 @@ export function registerCreateTools(server: McpServer): void {
             }
           } else if (field instanceof pdfLib.PDFDropdown) {
             field.select(String(value));
+            if (customFont) {
+              const f: PdfLibDropdown = field;
+              rebuildAppearances.push(() => f.updateAppearances(customFont));
+            }
           } else if (field instanceof pdfLib.PDFRadioGroup) {
             field.select(String(value));
+          } else if (field instanceof pdfLib.PDFOptionList) {
+            field.select(String(value));
+            if (customFont) {
+              const f: PdfLibOptionList = field;
+              rebuildAppearances.push(() => f.updateAppearances(customFont));
+            }
           } else {
             return toolError(
               `Field '${name}' is of unsupported type for filling. Supported types: text, checkbox, dropdown, radio.`,
@@ -363,11 +424,35 @@ export function registerCreateTools(server: McpServer): void {
           filledCount++;
         }
 
-        if (flatten) {
-          form.flatten();
+        // When a custom font is supplied, regenerate each filled field's
+        // appearance streams with that font AFTER all values are set, then save
+        // WITHOUT letting pdf-lib re-render appearances with the default WinAnsi
+        // font (which would clobber the embedded non-Latin glyphs). We update
+        // both per-field (updateAppearances) and at the form level
+        // (updateFieldAppearances) so the AcroForm default-appearance/font
+        // resources reference the embedded font.
+        if (customFont) {
+          for (const rebuild of rebuildAppearances) {
+            rebuild();
+          }
+          form.updateFieldAppearances(customFont);
         }
 
-        await savePdf(pdfDoc, resolvedOutput);
+        if (flatten) {
+          // Flatten using the already-built (custom-font) appearances rather
+          // than regenerating them with the default font.
+          form.flatten(
+            customFont ? { updateFieldAppearances: false } : undefined,
+          );
+        }
+
+        await savePdf(
+          pdfDoc,
+          resolvedOutput,
+          // Suppress the default-font appearance regeneration on save only when
+          // we applied a custom font; otherwise keep pdf-lib's default behavior.
+          customFont ? { updateFieldAppearances: false } : undefined,
+        );
         const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
@@ -473,14 +558,30 @@ export function registerCreateTools(server: McpServer): void {
           pageIndices = Array.from({ length: totalPages }, (_, i) => i);
         }
 
+        // pdf-lib rotates drawn text about its draw origin (the baseline-left of
+        // the string), NOT about the text's center. Centering the unrotated
+        // origin and then rotating therefore swings the text off-center. To
+        // center the text's bounding box on the page after rotation, we offset
+        // the draw origin by the rotated half-extents of that box.
+        const rad = (rot * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const textWidth = font.widthOfTextAtSize(text, fSize);
+        const textHeight = font.heightAtSize(fSize);
+        const halfW = textWidth / 2;
+        const halfH = textHeight / 2;
+        // Vector from the draw origin (baseline-left) to the box center, rotated
+        // by `rot` (counter-clockwise, matching pdf-lib's positive rotation).
+        const dx = halfW * cos - halfH * sin;
+        const dy = halfW * sin + halfH * cos;
+
         for (const idx of pageIndices) {
           const page = pdfDoc.getPage(idx);
           const { width, height } = page.getSize();
-          const textWidth = font.widthOfTextAtSize(text, fSize);
 
           page.drawText(text, {
-            x: (width - textWidth) / 2,
-            y: height / 2,
+            x: width / 2 - dx,
+            y: height / 2 - dy,
             size: fSize,
             font,
             color: col,
@@ -632,6 +733,23 @@ export function registerCreateTools(server: McpServer): void {
         }
 
         const targetPage = pdfDoc.getPage(page - 1);
+
+        // Bounds check: the image is placed with its bottom-left corner at
+        // (x, y) (PDF origin is bottom-left). Reject placements that fall off
+        // the page so the image is never silently clipped or pushed off-page.
+        const { width: pageWidth, height: pageHeight } = targetPage.getSize();
+        if (
+          x < 0 ||
+          y < 0 ||
+          x + drawWidth > pageWidth ||
+          y + drawHeight > pageHeight
+        ) {
+          throw new PdfError(
+            `Image does not fit on page ${page}. Page size is ${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} points; the image draws as ${drawWidth.toFixed(0)}x${drawHeight.toFixed(0)} points with its bottom-left corner at (${x}, ${y}), extending to (${(x + drawWidth).toFixed(0)}, ${(y + drawHeight).toFixed(0)}). Reduce width/height or move x/y so 0 <= x, 0 <= y, x+width <= ${pageWidth.toFixed(0)}, y+height <= ${pageHeight.toFixed(0)}.`,
+            "INVALID_INPUT",
+          );
+        }
+
         targetPage.drawImage(image, {
           x,
           y,
@@ -742,7 +860,7 @@ export function registerCreateTools(server: McpServer): void {
           data: z
             .record(z.unknown())
             .describe(
-              "Template data. Invoice: companyName, clientName, invoiceNumber, invoiceDate, items[{description, quantity, unitPrice}], taxRate, dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName.",
+              "Template data. Invoice: companyName, clientName, invoiceNumber, invoiceDate, items[{description, quantity, unitPrice}], taxRate, currency (ISO code or symbol, default USD), dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName.",
             ),
           outputPath: z
             .string()

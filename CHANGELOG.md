@@ -20,7 +20,8 @@ templates resource).
   (column clustering, font-size heading inference, list detection) for LLM
   consumption. Honest scope: best on clean digital PDFs.
 - **New tool `pdf_search`** — find text across a PDF, returning page numbers
-  and surrounding snippets; literal or regex, case-insensitive by default.
+  and surrounding snippets; literal, case-insensitive substring match by default
+  (no regex — see the curation note below).
 - **New tool `pdf_compare`** — page-by-page text diff between two PDFs.
 - **New tool `pdf_delete_pages`** — remove a page range, preserving form fields
   on the remaining pages.
@@ -80,15 +81,50 @@ templates resource).
   @react-pdf/renderer + remark) — eliminates the jsdom memory-leak risk and the
   Roboto-only font constraint.
 
+### Curation & perfecting (pre-release)
+
+An adversarial curation + perfecting pass applied before tagging 1.0.0. All
+items land in 1.0.0 as it has not yet been published. The full roster stays at
+22 tools (zero cuts).
+
+- **`pdf_search` is now literal substring only** — the `regex` parameter has been
+  removed entirely. Search is a literal, case-insensitive substring match
+  (`caseSensitive:true` for exact case). Rationale: a user-supplied regular
+  expression can trigger catastrophic backtracking (ReDoS) that single-threaded
+  JavaScript cannot reliably interrupt, so the earlier wall-clock time-budget
+  mitigation is superseded by removing the attack surface. Safe regex search is
+  deferred to v1.1. **Note:** this is a breaking input-schema change relative to
+  the earlier pre-release hardening bullet below, but the package is unpublished
+  so there is no compatibility impact.
+- **`pdf_embed_image` rejects off-page placement** — a requested
+  position/size that would push any part of the image outside the page bounds
+  now throws a coded error instead of silently clipping the image.
+- **`pdf_add_watermark` diagonal centering fixed** — diagonal watermarks are now
+  rotated about the text's own center and anchored at the page center, so the
+  watermark is properly centered rather than offset by the rotation pivot.
+- **`pdf_create_from_template` invoice `currency`** — the invoice template now
+  accepts an optional `currency` field (defaults to `USD`) controlling the
+  currency label on rendered amounts.
+- **`pdf_fill_form` `fontPath` actually applies non-Latin fonts** — a custom
+  `.ttf`/`.otf` supplied via `fontPath` is embedded and applied to the filled
+  field appearances, so non-Latin scripts (Arabic, CJK, Devanagari, etc.) render
+  correctly instead of the embed being ignored.
+- **`pdf_to_markdown` table scope clarified** — tabular regions are emitted as
+  positioned text in reading order; tables are not reconstructed as Markdown
+  tables (documented as an explicit scope note, no behavior change).
+
 ### Hardening (pre-release)
 
 A pre-ship hardening pass applied before tagging the 1.0.0 release. All items
 land in 1.0.0 as it has not yet been published.
 
-- **`pdf_search` ReDoS time budget** — user-supplied `regex` queries are now
+- **`pdf_search` ReDoS time budget** — user-supplied `regex` queries were
   evaluated under a wall-clock time budget so a pathological/catastrophic
-  backtracking pattern can no longer hang the server; it aborts with a
-  `RESOURCE_LIMIT` error instead.
+  backtracking pattern could no longer hang the server; it aborted with a
+  `RESOURCE_LIMIT` error instead. **Superseded** in the curation pass above:
+  the `regex` parameter has since been removed entirely (literal substring
+  search only) to eliminate the ReDoS attack surface rather than merely bound
+  it.
 - **Coded `PdfError` across all validators** — `validatePdfPath`,
   `validateOutputPath`, `validateFontPath`, `validateImagePath`,
   `validateFileSize`, `parsePageRange`, and `loadExistingPdf` now throw a

@@ -241,7 +241,7 @@ export function registerReadTools(server: McpServer): void {
     "pdf_to_markdown",
     {
       description:
-        "Convert a PDF to clean, reading-order Markdown for LLM consumption: reconstructs columns, infers headings from font size, and detects lists. Best on clean, digital (text-based) PDFs; degrades on scanned/image-only PDFs (use pdf_render_pages for those) and very complex layouts. Returns the first 10 pages by default.",
+        "Convert a PDF to clean, reading-order Markdown for LLM consumption: reconstructs columns, infers headings from font size, and detects bullet/numbered lists. Tables are emitted as plain reading-order text, NOT reconstructed as Markdown tables. Best on clean, digital (text-based) PDFs; degrades on scanned/image-only PDFs (use pdf_render_pages for those) and very complex layouts. Returns the first 10 pages by default.",
       inputSchema: z
         .object({
           filePath: z
@@ -303,7 +303,7 @@ export function registerReadTools(server: McpServer): void {
     "pdf_search",
     {
       description:
-        "Search text across a PDF and return matches with a short surrounding snippet and the page number. Treats the query as a literal substring unless regex is true. Case-insensitive by default. Searches all pages unless a range is given.",
+        "Search text across a PDF and return matches with a short surrounding snippet and the page number. The query is matched as a literal substring (case-insensitive by default). Searches all pages unless a range is given.",
       inputSchema: z
         .object({
           filePath: z
@@ -314,11 +314,7 @@ export function registerReadTools(server: McpServer): void {
             .string()
             .min(1)
             .max(1024)
-            .describe("Text to find (literal substring unless regex is true)"),
-          regex: z
-            .boolean()
-            .optional()
-            .describe("Treat the query as a JavaScript regular expression."),
+            .describe("Literal text to find (matched as a substring)"),
           caseSensitive: z
             .boolean()
             .optional()
@@ -337,7 +333,7 @@ export function registerReadTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ filePath, query, regex, caseSensitive, pages }) => {
+    async ({ filePath, query, caseSensitive, pages }) => {
       try {
         const resolvedPath = await validatePdfPath(filePath);
         await validateFileSize(resolvedPath);
@@ -349,11 +345,12 @@ export function registerReadTools(server: McpServer): void {
           pageIndices = parsePageRange(pages, totalPages);
         }
 
-        const matcher = buildMatcher(
-          query,
-          regex ?? false,
-          caseSensitive ?? false,
-        );
+        // Literal-only matcher: the query is escaped so every regex
+        // metacharacter is treated as a plain character. This is zero-ReDoS by
+        // construction — there is no user-controlled pattern to backtrack on —
+        // so no wall-clock/iteration budget is needed. (Safe regex search via a
+        // worker thread / RE2 is deferred to a later release.)
+        const matcher = buildLiteralMatcher(query, caseSensitive ?? false);
 
         const { pages: pageTexts } = await extractPdfText(
           resolvedPath,
@@ -364,36 +361,12 @@ export function registerReadTools(server: McpServer): void {
         let totalMatches = 0;
         let capped = false;
 
-        // A user-supplied regex can backtrack catastrophically (ReDoS) and hang
-        // the single-threaded stdio server. Bound the scan by a wall-clock
-        // budget (checked every N iterations to keep Date.now() cheap) and an
-        // absolute iteration cap as a defensive backstop.
-        const searchStart = Date.now();
-        let iterations = 0;
-
         for (const { page, text } of pageTexts) {
           if (!text) continue;
-          // Reset lastIndex for global regexes between pages.
+          // Reset lastIndex between pages (the matcher is global).
           matcher.lastIndex = 0;
           let match: RegExpExecArray | null;
           while ((match = matcher.exec(text)) !== null) {
-            iterations++;
-            if (
-              iterations % SEARCH_TIME_CHECK_INTERVAL === 0 &&
-              Date.now() - searchStart > SEARCH_TIME_BUDGET_MS
-            ) {
-              throw new PdfError(
-                "Search exceeded its time budget — narrow the query or simplify the pattern.",
-                "RESOURCE_LIMIT",
-              );
-            }
-            if (iterations > MAX_SEARCH_ITERATIONS) {
-              throw new PdfError(
-                "Search exceeded its time budget — narrow the query or simplify the pattern.",
-                "RESOURCE_LIMIT",
-              );
-            }
-
             totalMatches++;
             if (results.length < MAX_SEARCH_RESULTS) {
               results.push({
@@ -403,7 +376,8 @@ export function registerReadTools(server: McpServer): void {
             } else {
               capped = true;
             }
-            // Avoid an infinite loop on zero-width matches.
+            // An escaped non-empty query can never match zero-width, but advance
+            // defensively to guarantee forward progress regardless.
             if (match.index === matcher.lastIndex) matcher.lastIndex++;
           }
         }
@@ -446,17 +420,6 @@ export function registerReadTools(server: McpServer): void {
 }
 
 const CONTEXT_RADIUS = 60;
-
-// Wall-clock budget for a single pdf_search scan. A catastrophically
-// backtracking user regex (ReDoS) would otherwise block the single-threaded
-// stdio event loop indefinitely.
-const SEARCH_TIME_BUDGET_MS = 1500;
-// How often to consult the clock inside the match loop. Checking every
-// iteration would add a syscall per match; every Nth keeps the guard cheap
-// while still bounding overrun to a small slice of the budget.
-const SEARCH_TIME_CHECK_INTERVAL = 500;
-// Absolute backstop independent of clock granularity.
-const MAX_SEARCH_ITERATIONS = 5_000_000;
 
 /**
  * Trim the results array so the full serialized JSON response stays under
@@ -505,25 +468,14 @@ function trimResultsToLimit(
   return { results: kept, dropped: results.length - kept.length };
 }
 
-/** Build a global RegExp matcher for either a literal substring or a user regex. */
-function buildMatcher(
-  query: string,
-  isRegex: boolean,
-  caseSensitive: boolean,
-): RegExp {
+/**
+ * Build a global matcher that finds `query` as a literal substring. The query
+ * is escaped so every regex metacharacter (e.g. `(a+)+`, `.*`) is matched
+ * verbatim — there is no user-controlled pattern, so this cannot trigger
+ * catastrophic backtracking (ReDoS).
+ */
+function buildLiteralMatcher(query: string, caseSensitive: boolean): RegExp {
   const flags = caseSensitive ? "g" : "gi";
-  if (isRegex) {
-    try {
-      return new RegExp(query, flags);
-    } catch (err) {
-      throw new PdfError(
-        `Invalid regular expression: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        "INVALID_INPUT",
-      );
-    }
-  }
   return new RegExp(escapeRegExp(query), flags);
 }
 

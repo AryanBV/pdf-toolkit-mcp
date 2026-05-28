@@ -4,12 +4,81 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, access } from "node:fs/promises";
+import zlib from "node:zlib";
 import pdfLib from "@pdfme/pdf-lib";
 
 const SERVER_PATH = fileURLToPath(
   new URL("../../dist/index.js", import.meta.url),
 );
+
+/**
+ * A CJK font shipped inside the @pdfme/pdf-lib package, used as a real .otf
+ * fixture for the non-Latin form-fill regression test. Resolved relative to the
+ * repo root rather than via require.resolve (the package's `exports` field
+ * blocks subpath resolution of asset files).
+ */
+const CJK_FONT_PATH = fileURLToPath(
+  new URL(
+    "../../node_modules/@pdfme/pdf-lib/assets/fonts/source_hans_jp/SourceHanSerifJP-Regular.otf",
+    import.meta.url,
+  ),
+);
+
+/**
+ * Decode a page's content stream(s) to a latin1 string so tests can inspect the
+ * text-positioning operators (e.g. the `Tm` matrix). Handles both a single
+ * stream and an array of indirect content streams, inflating FlateDecode.
+ */
+function decodePageContent(
+  doc: InstanceType<typeof pdfLib.PDFDocument>,
+  pageIndex: number,
+): string {
+  const ctx = doc.context;
+  const node = doc.getPage(pageIndex).node;
+  const contents = node.Contents();
+  if (!contents) return "";
+
+  const decodeStream = (stream: unknown): string => {
+    // PDFRawStream exposes its encoded bytes via `.contents`.
+    const raw = (stream as { contents?: Uint8Array }).contents;
+    if (!raw) return "";
+    let bytes: Uint8Array = raw;
+    try {
+      bytes = new Uint8Array(zlib.inflateSync(Buffer.from(raw)));
+    } catch {
+      // Not FlateDecode-compressed; use the raw bytes as-is.
+    }
+    return Buffer.from(bytes).toString("latin1");
+  };
+
+  if (contents.constructor.name === "PDFArray") {
+    const arr = contents as unknown as {
+      size(): number;
+      get(i: number): unknown;
+    };
+    let out = "";
+    for (let i = 0; i < arr.size(); i++) {
+      const el = arr.get(i);
+      const stream =
+        (el as { constructor: { name: string } }).constructor.name === "PDFRef"
+          ? ctx.lookup(el as Parameters<typeof ctx.lookup>[0])
+          : el;
+      out += decodeStream(stream) + "\n";
+    }
+    return out;
+  }
+  return decodeStream(contents);
+}
+
+/** Extract the first text matrix (`Tm`: a b c d e f) from a content stream. */
+function firstTextMatrix(content: string): number[] | null {
+  const m = content.match(
+    /(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) Tm/,
+  );
+  if (!m) return null;
+  return m.slice(1, 7).map(Number);
+}
 
 interface ToolResultLike {
   isError?: boolean;
@@ -155,6 +224,72 @@ describe("create tools (react-pdf + remark engine)", () => {
     expect(text).not.toMatch(NO_STACK);
   }, 30_000);
 
+  it("pdf_fill_form rejects non-Latin text without a fontPath", async () => {
+    const src = join(workDir, "fill-nonlatin-src.pdf");
+    const out = join(workDir, "fill-nonlatin-out.pdf");
+    await writeFile(src, await makeFormPdf());
+
+    const result = (await client.callTool({
+      name: "pdf_fill_form",
+      arguments: {
+        filePath: src,
+        fields: { fullName: "こんにちは世界" },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toMatch(/non-latin/i);
+    expect(text).toMatch(/fontPath/);
+    expect(text).not.toMatch(NO_STACK);
+  }, 30_000);
+
+  it("pdf_fill_form embeds non-Latin text with a real .otf fontPath (round-trips, no clobber)", async () => {
+    // Regression for the silent fontPath bug: previously the field appearance
+    // was built BEFORE setText and then save() re-rendered it with the default
+    // WinAnsi font, throwing "WinAnsi cannot encode" for CJK glyphs. The fix
+    // sets the value first, applies the custom font to appearances, and saves
+    // with updateFieldAppearances:false so the embedded glyphs survive.
+    let hasFont = true;
+    try {
+      await access(CJK_FONT_PATH);
+    } catch {
+      hasFont = false;
+    }
+    if (!hasFont) {
+      // Skip cleanly if the bundled fixture font is unavailable for any reason.
+      return;
+    }
+
+    const src = join(workDir, "fill-cjk-src.pdf");
+    const out = join(workDir, "fill-cjk-out.pdf");
+    await writeFile(src, await makeFormPdf());
+
+    const jp = "こんにちは世界";
+    const result = (await client.callTool({
+      name: "pdf_fill_form",
+      arguments: {
+        filePath: src,
+        fields: { fullName: jp },
+        outputPath: out,
+        fontPath: CJK_FONT_PATH,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.filledFields).toBe(1);
+    expect(payload.fileSize).toBeTruthy();
+
+    // The output is a real PDF and the non-Latin value round-trips intact.
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    const tf = doc.getForm().getTextField("fullName");
+    expect(tf.getText()).toBe(jp);
+  }, 30_000);
+
   // ── pdf_create_from_markdown ──────────────────────────────────────────
   it("renders markdown (heading, paragraph, list, table, code) to a valid PDF", async () => {
     const out = join(workDir, "md-rich.pdf");
@@ -241,6 +376,77 @@ describe("create tools (react-pdf + remark engine)", () => {
     const text = await extractAll(client, out);
     expect(text).toContain("Wile E. Coyote");
     expect(text).toContain("Rocket Skates");
+  }, 30_000);
+
+  it("renders a non-USD currency symbol on the invoice (regression: hardcoded $)", async () => {
+    const out = join(workDir, "invoice-eur.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_template",
+      arguments: {
+        templateName: "invoice",
+        data: {
+          companyName: "Euro Co",
+          clientName: "Client GmbH",
+          invoiceNumber: "INV-EUR-1",
+          currency: "EUR",
+          items: [{ description: "Widget", quantity: 2, unitPrice: 10 }],
+        },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const text = await extractAll(client, out);
+    // The Euro symbol must appear and the dollar sign must NOT.
+    expect(text).toContain("€");
+    expect(text).not.toContain("$");
+    // Total = 2 * 10 = 20.00 in EUR.
+    expect(text).toContain("€20.00");
+  }, 30_000);
+
+  it("renders a non-WinAnsi currency as its ISO code instead of crashing (INR)", async () => {
+    const out = join(workDir, "invoice-inr.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_template",
+      arguments: {
+        templateName: "invoice",
+        data: {
+          companyName: "Rupee Co",
+          clientName: "Client Pvt Ltd",
+          invoiceNumber: "INV-INR-1",
+          currency: "INR",
+          items: [{ description: "Widget", quantity: 2, unitPrice: 10 }],
+        },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    // ₹ is not WinAnsi-encodable; the Helvetica invoice must NOT throw. It falls
+    // back to the ASCII ISO code so every currency renders safely.
+    expect(result.isError).toBeFalsy();
+    const text = await extractAll(client, out);
+    expect(text).toContain("INR 20.00");
+    expect(text).not.toContain("₹");
+  }, 30_000);
+
+  it("defaults the invoice currency to USD ($) when none is provided", async () => {
+    const out = join(workDir, "invoice-default-usd.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_template",
+      arguments: {
+        templateName: "invoice",
+        data: {
+          companyName: "Dollar Co",
+          clientName: "USD Client",
+          items: [{ description: "Item", quantity: 1, unitPrice: 5 }],
+        },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const text = await extractAll(client, out);
+    expect(text).toContain("$5.00");
   }, 30_000);
 
   it("generates a report PDF", async () => {
@@ -445,5 +651,205 @@ describe("create tools (react-pdf + remark engine)", () => {
     expect(text).toContain("PAGE_OUT_OF_RANGE");
     expect(text).toMatch(/exceeds document length/i);
     expect(text).not.toMatch(NO_STACK);
+  }, 30_000);
+
+  it("embeds an in-bounds image successfully (happy path)", async () => {
+    const pdf = join(workDir, "host-ok.pdf");
+    const png = join(workDir, "tiny-ok.png");
+    await writeFile(pdf, await makePlainPdf());
+    await writeFile(
+      png,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        "base64",
+      ),
+    );
+    const out = join(workDir, "embedded-ok.pdf");
+
+    // The host page is 300x400; a 50x50 image at (10,10) fits entirely.
+    const result = (await client.callTool({
+      name: "pdf_embed_image",
+      arguments: {
+        filePath: pdf,
+        imagePath: png,
+        page: 1,
+        x: 10,
+        y: 10,
+        width: 50,
+        height: 50,
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(payload.fileSize).toBeTruthy();
+    expect(payload.dimensions).toEqual({ width: 50, height: 50 });
+
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+  }, 30_000);
+
+  it("rejects an off-page image placement instead of silently clipping", async () => {
+    const pdf = join(workDir, "host-offpage.pdf");
+    const png = join(workDir, "tiny-offpage.png");
+    await writeFile(pdf, await makePlainPdf());
+    await writeFile(
+      png,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        "base64",
+      ),
+    );
+
+    // The host page is 300x400; x=5000 pushes the image entirely off-page.
+    const result = (await client.callTool({
+      name: "pdf_embed_image",
+      arguments: {
+        filePath: pdf,
+        imagePath: png,
+        page: 1,
+        x: 5000,
+        y: 10,
+        width: 50,
+        height: 50,
+        outputPath: join(workDir, "embedded-offpage.pdf"),
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain("INVALID_INPUT");
+    expect(text).toMatch(/does not fit on page/i);
+    // Reports the page dimensions so the caller can correct placement.
+    expect(text).toContain("300x400");
+    expect(text).not.toMatch(NO_STACK);
+  }, 30_000);
+
+  // ── pdf_add_watermark ─────────────────────────────────────────────────
+  it("centers the diagonal watermark on the page (regression: off-center)", async () => {
+    // Build a known-size single-page PDF (US Letter: 612x792).
+    const src = join(workDir, "wm-src.pdf");
+    {
+      const doc = await pdfLib.PDFDocument.create();
+      doc.addPage([612, 792]);
+      await writeFile(src, await doc.save());
+    }
+    const out = join(workDir, "wm-out.pdf");
+
+    const result = (await client.callTool({
+      name: "pdf_add_watermark",
+      arguments: {
+        filePath: src,
+        text: "CONFIDENTIAL",
+        outputPath: out,
+        // Defaults: rotation 45, fontSize 50.
+      },
+    })) as ToolResultLike;
+    expect(result.isError).toBeFalsy();
+
+    // Recover the text draw origin from the watermarked content stream and
+    // verify the watermark's rotated bounding-box CENTER lands on the page
+    // center. The old code centered the unrotated origin, leaving the box off
+    // center by roughly the rotated half-extents.
+    const bytes = await readFile(out);
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    const content = decodePageContent(doc, 0);
+    const tm = firstTextMatrix(content);
+    expect(tm).not.toBeNull();
+    const [a, b, , , e, f] = tm as number[];
+    // Recompute the same geometry the tool uses.
+    const font = await doc.embedFont(pdfLib.StandardFonts.Helvetica);
+    const fSize = 50;
+    const rot = 45;
+    const rad = (rot * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const halfW = font.widthOfTextAtSize("CONFIDENTIAL", fSize) / 2;
+    const halfH = font.heightAtSize(fSize) / 2;
+    const dx = halfW * cos - halfH * sin;
+    const dy = halfW * sin + halfH * cos;
+    // The matrix rotation must match the requested 45 degrees.
+    expect(a).toBeCloseTo(cos, 3);
+    expect(b).toBeCloseTo(sin, 3);
+    // Box center = origin (e,f) + rotated half-extents ≈ page center (306, 396).
+    expect(e + dx).toBeCloseTo(306, 0);
+    expect(f + dy).toBeCloseTo(396, 0);
+  }, 30_000);
+
+  // ── pdf_create (non-Latin + wrapping / overflow) ──────────────────────
+  it("pdf_create rejects non-Latin content without a fontPath", async () => {
+    const out = join(workDir, "create-nonlatin.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create",
+      arguments: {
+        outputPath: out,
+        content: "日本語のテキスト",
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain("UNSUPPORTED_FORMAT");
+    expect(text).toMatch(/fontPath/);
+    expect(text).not.toMatch(NO_STACK);
+  }, 30_000);
+
+  it("pdf_create renders non-Latin content with a fontPath", async () => {
+    let hasFont = true;
+    try {
+      await access(CJK_FONT_PATH);
+    } catch {
+      hasFont = false;
+    }
+    if (!hasFont) return;
+
+    const out = join(workDir, "create-cjk.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create",
+      arguments: {
+        outputPath: out,
+        content: "日本語のテキスト",
+        fontPath: CJK_FONT_PATH,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.pageCount).toBeGreaterThanOrEqual(1);
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+  }, 30_000);
+
+  it("pdf_create wraps long lines and overflows onto multiple pages", async () => {
+    const out = join(workDir, "create-overflow.pdf");
+    // A long single paragraph plus many lines to force wrapping + page overflow
+    // on a small page with large margins.
+    const longWord = "supercalifragilisticexpialidocious ".repeat(20);
+    const manyLines = Array.from(
+      { length: 200 },
+      (_, i) => `Line ${i + 1}: ${longWord}`,
+    ).join("\\n");
+
+    const result = (await client.callTool({
+      name: "pdf_create",
+      arguments: {
+        outputPath: out,
+        content: manyLines,
+        pageSize: "A4",
+        fontSize: 14,
+        margin: 60,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    // 200 wrapped+overflowed lines must span more than one page.
+    expect(payload.pageCount).toBeGreaterThan(1);
+    expect(payload.pageSize).toBe("A4");
+
+    const text = await extractAll(client, out);
+    expect(text).toContain("Line 1:");
   }, 30_000);
 });

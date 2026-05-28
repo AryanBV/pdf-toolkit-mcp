@@ -32,6 +32,39 @@ function median(values: number[]): number {
 }
 
 /**
+ * Body font size = the MODAL (most frequent) size on the page, weighted by the
+ * amount of TEXT set at each size (character count), not by item count. This is
+ * far more robust than the median for heading inference: a document that is
+ * mostly headings (e.g. a table of contents or a slide) would have a *heading*
+ * size as its median, so real headings would not clear the heading threshold
+ * and body text could be misclassified. The size carrying the most characters
+ * is the true body text by definition. Ties resolve to the smaller size, since
+ * body copy is generally smaller than the headings that punctuate it.
+ */
+function modalFontSize(items: PositionedTextItem[]): number {
+  if (items.length === 0) return 0;
+
+  // Bucket by half-point so near-identical glyph sizes (anti-aliasing /
+  // sub-pixel matrix noise) collapse to one body size.
+  const weightBySize = new Map<number, number>();
+  for (const item of items) {
+    const bucket = Math.round(item.fontSize * 2) / 2;
+    const weight = Math.max(item.str.length, 1);
+    weightBySize.set(bucket, (weightBySize.get(bucket) ?? 0) + weight);
+  }
+
+  let bestSize = 0;
+  let bestWeight = -1;
+  for (const [size, weight] of weightBySize) {
+    if (weight > bestWeight || (weight === bestWeight && size < bestSize)) {
+      bestWeight = weight;
+      bestSize = size;
+    }
+  }
+  return bestSize;
+}
+
+/**
  * Detect columns by clustering item x-positions. We sort items by their left
  * edge and split into a new column wherever a horizontal gap between the running
  * column's right edge and the next item exceeds a multiple of the typical glyph
@@ -169,21 +202,30 @@ function renderLine(
  * Reconstruct reading-order Markdown from a single page's positioned text.
  */
 function pageToMarkdown(layout: PageTextLayout): string {
-  if (layout.items.length === 0) return "";
+  // Drop whitespace-only items before any layout analysis. pdf.js frequently
+  // emits a single space run that spans a multi-column gutter (e.g. x=76 w=284
+  // reaching from the left column's edge to the right column); its width would
+  // otherwise bridge the gap in detectColumns and collapse two columns into one,
+  // interleaving the rows. groupLines re-inserts single spaces between fragments,
+  // so dropping these carries no content loss.
+  const items = layout.items.filter((i) => i.str.trim().length > 0);
+  if (items.length === 0) return "";
 
-  // Body font size = the most common (modal) size, approximated by the median.
-  const bodySize = median(layout.items.map((i) => i.fontSize)) || 0;
+  // Body font size = the most common (modal) size, weighted by character count.
+  // The modal size is robust on heading-heavy pages where the median would land
+  // on a heading size and break heading inference.
+  const bodySize = modalFontSize(items);
 
   // Distinct heading sizes, largest first, that exceed the body size.
   const headingSizes = [
     ...new Set(
-      layout.items
+      items
         .map((i) => Math.round(i.fontSize * 2) / 2)
         .filter((s) => s >= bodySize * HEADING_SCALE_RATIO),
     ),
   ].sort((a, b) => b - a);
 
-  const columns = detectColumns(layout.items).sort((a, b) => a.minX - b.minX);
+  const columns = detectColumns(items).sort((a, b) => a.minX - b.minX);
 
   const blocks: string[] = [];
 
