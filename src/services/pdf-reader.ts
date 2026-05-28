@@ -27,10 +27,36 @@ function isTextItem(item: unknown): item is RawTextItem {
   );
 }
 
+/**
+ * Map a pdf.js / unpdf parse failure to a coded PdfError: password/encryption
+ * errors become ENCRYPTED_PDF, everything else (bad header, invalid structure,
+ * truncated stream) becomes CORRUPT_PDF — so every unpdf-backed read tool
+ * (extract_text, search, to_markdown, compare, render) returns a stable code
+ * instead of a bare "Invalid PDF structure." message leaking from the engine.
+ */
+function toReadError(err: unknown): PdfError {
+  const message = err instanceof Error ? err.message : String(err);
+  const name = err instanceof Error ? err.name : "";
+  if (name === "PasswordException" || /password|encrypt/i.test(message)) {
+    return new PdfError(
+      `PDF is encrypted or password-protected: ${message}`,
+      "ENCRYPTED_PDF",
+    );
+  }
+  return new PdfError(
+    `Failed to parse PDF — the file may be corrupt, encrypted, or not a valid PDF: ${message}`,
+    "CORRUPT_PDF",
+  );
+}
+
 export async function loadPdf(filePath: string): Promise<PDFDocumentProxy> {
   const buffer = await readFile(filePath);
   const data = toUint8Array(buffer);
-  return getDocumentProxy(data);
+  try {
+    return await getDocumentProxy(data);
+  } catch (err) {
+    throw toReadError(err);
+  }
 }
 
 export async function extractPdfText(
@@ -39,16 +65,21 @@ export async function extractPdfText(
 ): Promise<{ totalPages: number; pages: PageText[] }> {
   const buffer = await readFile(filePath);
   const data = toUint8Array(buffer);
-  const result = await extractText(data, { mergePages: false });
+  let result: { totalPages: number; text: string[] };
+  try {
+    result = await extractText(data, { mergePages: false });
+  } catch (err) {
+    throw toReadError(err);
+  }
 
   let pages: PageText[];
 
   if (pageIndices) {
     pages = pageIndices
       .filter((i) => i >= 0 && i < result.totalPages)
-      .map((i) => ({ page: i + 1, text: result.text[i] }));
+      .map((i) => ({ page: i + 1, text: result.text[i] ?? "" }));
   } else {
-    pages = result.text.map((text, i) => ({ page: i + 1, text }));
+    pages = result.text.map((text, i) => ({ page: i + 1, text: text ?? "" }));
   }
 
   return { totalPages: result.totalPages, pages };
@@ -78,11 +109,7 @@ export async function extractPositionedText(
   try {
     doc = await getDocumentProxy(data);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new PdfError(
-      `Failed to parse PDF — the file may be corrupt, encrypted, or not a valid PDF: ${message}`,
-      "CORRUPT_PDF",
-    );
+    throw toReadError(err);
   }
 
   try {

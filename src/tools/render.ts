@@ -1,10 +1,9 @@
 import { readFile, writeFile, access } from "node:fs/promises";
 import { resolve, basename, extname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { PDFDocument } from "@pdfme/pdf-lib";
-import pdfLib from "@pdfme/pdf-lib";
 import { z } from "zod";
-import { renderPdfPages } from "../services/pdf-renderer.js";
+import type { RenderedPage, PageSize } from "../services/pdf-renderer.js";
+import { renderPdfPages, getPageSizes } from "../services/pdf-renderer.js";
 import { getPdfPageCount } from "../services/pdf-reader.js";
 import {
   validatePdfPath,
@@ -26,21 +25,15 @@ import {
 
 // For inline rendering we cap the effective DPI so neither dimension of the
 // largest requested page exceeds MAX_INLINE_DIMENSION. This keeps the base64
-// payload small enough to protect the LLM context window. Page sizes come from
-// pdf-lib (already a dependency) in PDF points (72 per inch); a render at
-// `dpi` scales each point by dpi/72.
-function safeInlineDpi(
-  doc: PDFDocument,
-  pageIndices: number[],
-  requestedDpi: number,
-): number {
-  const pages = doc.getPages();
+// payload small enough to protect the LLM context window. Page sizes are read
+// straight from PDFium (the same engine that renders), in PDF points (72 per
+// inch); a render at `dpi` scales each point by dpi/72. Reading sizes from
+// PDFium avoids a second parse via pdf-lib, which would surface a misleading
+// error on encrypted/corrupt input in inline mode.
+function safeInlineDpi(pageSizes: PageSize[], requestedDpi: number): number {
   let maxPoints = 0;
-  for (const idx of pageIndices) {
-    const page = pages[idx];
-    if (!page) continue;
-    const { width, height } = page.getSize();
-    maxPoints = Math.max(maxPoints, width, height);
+  for (const size of pageSizes) {
+    maxPoints = Math.max(maxPoints, size.widthPoints, size.heightPoints);
   }
 
   if (maxPoints <= 0) return requestedDpi;
@@ -55,7 +48,7 @@ export function registerRenderTools(server: McpServer): void {
     "pdf_render_pages",
     {
       description:
-        "Render PDF pages to images so a vision-capable client can read scanned or image-only PDFs (OCR/visual inspection). Default writes PNG/JPEG files to disk and returns their paths. Set inline:true to return pages as inline image blocks the model can see directly (max 5 pages, DPI auto-capped). Default DPI 150; renders the first 50 pages unless a page range is given.",
+        "Render PDF pages to images so a vision-capable client can read scanned or image-only PDFs. Writes PNG/JPEG files and returns their paths; set inline:true to return image blocks the model can see directly.",
       inputSchema: z
         .object({
           filePath: z
@@ -99,6 +92,8 @@ export function registerRenderTools(server: McpServer): void {
         .strict(),
       annotations: {
         readOnlyHint: false,
+        // Not destructive: writes new image files (may overwrite a same-named
+        // file at the output path), but never modifies the source PDF.
         destructiveHint: false,
         idempotentHint: true,
         openWorldHint: false,
@@ -144,8 +139,11 @@ export function registerRenderTools(server: McpServer): void {
             );
           }
 
-          const doc = await pdfLib.PDFDocument.load(pdfBytes);
-          const effectiveDpi = safeInlineDpi(doc, pageIndices, renderDpi);
+          // Derive sizes from PDFium (the render engine) rather than re-parsing
+          // with pdf-lib, so encrypted/corrupt input fails with one coherent
+          // error instead of a misleading double-parse message.
+          const pageSizes = await getPageSizes(pdfBytes, pageIndices);
+          const effectiveDpi = safeInlineDpi(pageSizes, renderDpi);
 
           const rendered = await renderPdfPages(pdfBytes, {
             pageIndices,
@@ -186,26 +184,29 @@ export function registerRenderTools(server: McpServer): void {
           resolvedOutputDir = resolve(resolvedPath, "..");
         }
 
-        const rendered = await renderPdfPages(pdfBytes, {
-          pageIndices,
-          dpi: renderDpi,
-          format: renderFormat,
-        });
-
         const ext = renderFormat === "png" ? "png" : "jpg";
         const pdfBaseName = basename(resolvedPath, extname(resolvedPath));
 
+        // Stream each rendered page straight to disk via the onPage callback and
+        // release its buffer before the next page renders, so file-mode never
+        // holds more than one encoded page in memory (avoids OOM at e.g. 50
+        // pages x 300 DPI). We collect only lightweight metadata per page.
         const images: { page: number; path: string; fileSize: string }[] = [];
-        for (const img of rendered) {
-          const pageNumber = img.pageIndex + 1;
-          const outPath = join(
-            resolvedOutputDir,
-            `${pdfBaseName}-page-${pageNumber}.${ext}`,
-          );
-          await writeFile(outPath, img.data);
-          const fileSize = await getFileSize(outPath);
-          images.push({ page: pageNumber, path: outPath, fileSize });
-        }
+        await renderPdfPages(pdfBytes, {
+          pageIndices,
+          dpi: renderDpi,
+          format: renderFormat,
+          onPage: async (img: RenderedPage) => {
+            const pageNumber = img.pageIndex + 1;
+            const outPath = join(
+              resolvedOutputDir,
+              `${pdfBaseName}-page-${pageNumber}.${ext}`,
+            );
+            await writeFile(outPath, img.data);
+            const fileSize = await getFileSize(outPath);
+            images.push({ page: pageNumber, path: outPath, fileSize });
+          },
+        });
 
         const response: Record<string, unknown> = {
           outputDir: resolvedOutputDir,

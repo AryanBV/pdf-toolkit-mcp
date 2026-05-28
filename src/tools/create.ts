@@ -29,7 +29,7 @@ import { createFromMarkdown, renderTemplate } from "../services/pdf-creator.js";
 import { templateRegistry } from "../templates/index.js";
 import type { TemplateName } from "../types.js";
 import { writeFile } from "node:fs/promises";
-import { MAX_IMAGE_DIMENSION } from "../constants.js";
+import { MAX_IMAGE_DIMENSION, MAX_MARKDOWN_INPUT_CHARS } from "../constants.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -97,6 +97,10 @@ const WATERMARK_COLORS: Record<string, ReturnType<typeof pdfLib.rgb>> = {
 
 // ── Tool Registration ───────────────────────────────────────────────────
 
+// destructiveHint stays false on every write tool here: each produces a NEW
+// file at `outputPath` rather than mutating its input in place. If a file
+// already exists at that path it is overwritten, but the source PDF is never
+// altered — so these are non-destructive in the MCP sense.
 export function registerCreateTools(server: McpServer): void {
   // ── pdf_create ──────────────────────────────────────────────────────
   server.registerTool(
@@ -329,8 +333,9 @@ export function registerCreateTools(server: McpServer): void {
         for (const [name, value] of Object.entries(fields)) {
           const field = allFields.find((f) => f.getName() === name);
           if (!field) {
-            return toolError(
+            throw new PdfError(
               `Field '${name}' not found in PDF. Available fields: ${availableNames.join(", ")}`,
+              "FIELD_NOT_FOUND",
             );
           }
 
@@ -577,8 +582,9 @@ export function registerCreateTools(server: McpServer): void {
         const totalPages = pdfDoc.getPageCount();
 
         if (page > totalPages) {
-          return toolError(
+          throw new PdfError(
             `Page ${page} exceeds document length (${totalPages} pages).`,
+            "PAGE_OUT_OF_RANGE",
           );
         }
 
@@ -691,6 +697,13 @@ export function registerCreateTools(server: McpServer): void {
     },
     async ({ markdown, outputPath, pageSize, title, author }) => {
       try {
+        if (markdown.length > MAX_MARKDOWN_INPUT_CHARS) {
+          throw new PdfError(
+            "Markdown input exceeds the maximum size.",
+            "RESOURCE_LIMIT",
+          );
+        }
+
         const resolvedOutput = await validateOutputPath(outputPath);
 
         const bytes = await createFromMarkdown(markdown, {

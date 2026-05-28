@@ -33,17 +33,6 @@ templates resource).
   `merge-and-flatten` (alongside the existing `create-invoice`, `fill-form`).
 - A `pdf-toolkit://templates` **MCP resource** listing the available
   `pdf_create_from_template` templates and their accepted fields.
-
-### Fixed
-
-- **`pdf_merge`, `pdf_split`, `pdf_reorder_pages` now PRESERVE AcroForm form
-  fields** instead of silently stripping them (the long-standing pdf-lib
-  `copyPages` limitation). Fields whose names collide across inputs are
-  auto-namespaced; `flatten:true` bakes values into static content. Each tool
-  reports `{ preserved, renamed, dropped }`.
-- `pdf_get_metadata` now includes `fileSize` in its response.
-- `pdf_get_form_fields` no longer silently masks a corrupt form structure as
-  "no form" — it surfaces a real `CORRUPT_PDF` error.
 - Quality infrastructure: vitest test suite (incl. real stdio integration test
   and a stdout-pollution regression test), ESLint flat config + Prettier,
   Husky + lint-staged pre-commit hooks, and GitHub Actions CI.
@@ -52,8 +41,19 @@ templates resource).
   `src/utils/errors.ts`.
 - Centralized rendering/extraction resource limits in `src/constants.ts`.
 
+### Fixed
+
+- **`pdf_merge`, `pdf_split`, `pdf_reorder_pages` now PRESERVE AcroForm form
+  fields** instead of silently stripping them (the long-standing pdf-lib
+  `copyPages` limitation). Fields whose names collide across inputs are
+  auto-namespaced; `flatten:true` bakes values into static content. Each tool
+  reports `{ preserved, renamed, dropped }`.
+- `pdf_get_form_fields` no longer silently masks a corrupt form structure as
+  "no form" — it surfaces a real `CORRUPT_PDF` error.
+
 ### Changed
 
+- `pdf_get_metadata` now includes `fileSize` in its response.
 - Server version is now derived from `package.json` at runtime — a single source
   of truth that can no longer drift from the published version.
 - Dockerfile builds from source in a multi-stage build instead of pinning a
@@ -79,3 +79,47 @@ templates resource).
 - Removed `pdfmake`, `html-to-pdfmake`, `jsdom`, and `marked` (replaced by
   @react-pdf/renderer + remark) — eliminates the jsdom memory-leak risk and the
   Roboto-only font constraint.
+
+### Hardening (pre-release)
+
+A pre-ship hardening pass applied before tagging the 1.0.0 release. All items
+land in 1.0.0 as it has not yet been published.
+
+- **`pdf_search` ReDoS time budget** — user-supplied `regex` queries are now
+  evaluated under a wall-clock time budget so a pathological/catastrophic
+  backtracking pattern can no longer hang the server; it aborts with a
+  `RESOURCE_LIMIT` error instead.
+- **Coded `PdfError` across all validators** — `validatePdfPath`,
+  `validateOutputPath`, `validateFontPath`, `validateImagePath`,
+  `validateFileSize`, `parsePageRange`, and `loadExistingPdf` now throw a
+  `PdfError` carrying a stable `ErrorCode` (`FILE_NOT_FOUND`, `INVALID_INPUT`,
+  `NOT_A_PDF`, `UNSUPPORTED_FORMAT`, `RESOURCE_LIMIT`, `PAGE_OUT_OF_RANGE`,
+  `ENCRYPTED_PDF`, `CORRUPT_PDF`, `PERMISSION_DENIED`, …) so clients can branch
+  on the code rather than parsing message text. `toErrorResult` formats these as
+  `Error [CODE]: message`; bare errors stay `Error: message` and never leak a
+  stack.
+- **`ENCRYPTED_PDF` detection** — encrypted inputs to the read/manipulate tools
+  now surface a clear `ENCRYPTED_PDF` error from `loadExistingPdf` instead of
+  failing obscurely or being silently mishandled.
+- **`prepack` build guard** — added a `prepack` script (`npm run build`) so
+  `npm pack` / `npm publish` always rebuild `dist/` first. `dist/` is
+  gitignored, so a manual publish from a clean checkout previously risked
+  shipping an empty package.
+- **Node engines `>=20`** — `engines.node` raised from `>=18` to `>=20` (both 18
+  and 20 are EOL; `>=20` is the conservative non-breaking floor). CI now tests
+  Node 20, 22, and 24, and `npm publish` runs with `--provenance` plus a
+  fail-fast guard when `NPM_TOKEN` is unset.
+- **`pdf_embed_qr_code` aspect-ratio fix** — embedded barcodes/QR codes keep
+  their intrinsic aspect ratio instead of being stretched to the requested box.
+- **`pdf_render_pages` file-mode streaming** — file output streams pages to disk
+  rather than buffering every rendered raster in memory, lowering peak memory
+  for large/high-DPI renders.
+- **Duplicate-page form honesty** — `pdf_reorder_pages` (and other tools that
+  can emit a page more than once) report form-field outcomes truthfully when a
+  page is duplicated rather than over-counting preserved fields.
+- **`getFileSize` MB/GB scaling** — the human-readable file-size helper now
+  scales into MB and GB instead of reporting large outputs in kilobytes.
+- **New regression tests** — added/updated tests covering the ReDoS time
+  budget, coded validator errors, `ENCRYPTED_PDF` detection, QR aspect ratio,
+  file-mode render streaming, duplicate-page form reporting, `getFileSize`
+  scaling, and prompt coverage (`create-invoice`, `fill-form`).

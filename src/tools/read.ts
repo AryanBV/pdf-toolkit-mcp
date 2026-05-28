@@ -14,7 +14,11 @@ import {
 } from "../utils/validation.js";
 import { PdfError, toolSuccess, toErrorResult } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
-import { DEFAULT_EXTRACT_PAGES, MAX_SEARCH_RESULTS } from "../constants.js";
+import {
+  CHARACTER_LIMIT,
+  DEFAULT_EXTRACT_PAGES,
+  MAX_SEARCH_RESULTS,
+} from "../constants.js";
 import { layoutToMarkdown } from "./markdown-from-layout.js";
 import type { PdfMetadata, FormField } from "../types.js";
 
@@ -360,12 +364,36 @@ export function registerReadTools(server: McpServer): void {
         let totalMatches = 0;
         let capped = false;
 
+        // A user-supplied regex can backtrack catastrophically (ReDoS) and hang
+        // the single-threaded stdio server. Bound the scan by a wall-clock
+        // budget (checked every N iterations to keep Date.now() cheap) and an
+        // absolute iteration cap as a defensive backstop.
+        const searchStart = Date.now();
+        let iterations = 0;
+
         for (const { page, text } of pageTexts) {
           if (!text) continue;
           // Reset lastIndex for global regexes between pages.
           matcher.lastIndex = 0;
           let match: RegExpExecArray | null;
           while ((match = matcher.exec(text)) !== null) {
+            iterations++;
+            if (
+              iterations % SEARCH_TIME_CHECK_INTERVAL === 0 &&
+              Date.now() - searchStart > SEARCH_TIME_BUDGET_MS
+            ) {
+              throw new PdfError(
+                "Search exceeded its time budget — narrow the query or simplify the pattern.",
+                "RESOURCE_LIMIT",
+              );
+            }
+            if (iterations > MAX_SEARCH_ITERATIONS) {
+              throw new PdfError(
+                "Search exceeded its time budget — narrow the query or simplify the pattern.",
+                "RESOURCE_LIMIT",
+              );
+            }
+
             totalMatches++;
             if (results.length < MAX_SEARCH_RESULTS) {
               results.push({
@@ -380,13 +408,33 @@ export function registerReadTools(server: McpServer): void {
           }
         }
 
+        const notes: string[] = [];
+        if (capped) {
+          notes.push(
+            `Results capped at ${MAX_SEARCH_RESULTS}. Narrow the query or use a page range to see more.`,
+          );
+        }
+
+        // Trim the results ARRAY (not the serialized byte stream) so the JSON we
+        // return stays valid and under CHARACTER_LIMIT — a byte-level slice
+        // would corrupt the JSON mid-object on high-hit searches.
+        const { results: trimmedResults, dropped } = trimResultsToLimit(
+          results,
+          { query, totalMatches },
+        );
+        if (dropped > 0) {
+          notes.push(
+            `Showing ${trimmedResults.length} of ${results.length} returned matches; ${dropped} omitted to stay under the ${CHARACTER_LIMIT.toLocaleString()}-character response limit. Use a page range to narrow the search.`,
+          );
+        }
+
         const response: Record<string, unknown> = {
           query,
           totalMatches,
-          results,
+          results: trimmedResults,
         };
-        if (capped) {
-          response.note = `Results capped at ${MAX_SEARCH_RESULTS}. Narrow the query or use a page range to see more.`;
+        if (notes.length > 0) {
+          response.note = notes.join(" ");
         }
 
         return toolSuccess(response);
@@ -398,6 +446,64 @@ export function registerReadTools(server: McpServer): void {
 }
 
 const CONTEXT_RADIUS = 60;
+
+// Wall-clock budget for a single pdf_search scan. A catastrophically
+// backtracking user regex (ReDoS) would otherwise block the single-threaded
+// stdio event loop indefinitely.
+const SEARCH_TIME_BUDGET_MS = 1500;
+// How often to consult the clock inside the match loop. Checking every
+// iteration would add a syscall per match; every Nth keeps the guard cheap
+// while still bounding overrun to a small slice of the budget.
+const SEARCH_TIME_CHECK_INTERVAL = 500;
+// Absolute backstop independent of clock granularity.
+const MAX_SEARCH_ITERATIONS = 5_000_000;
+
+/**
+ * Trim the results array so the full serialized JSON response stays under
+ * CHARACTER_LIMIT. We measure the actual serialized size (results plus the
+ * surrounding envelope) and drop trailing results until it fits, rather than
+ * letting toolSuccess() byte-slice the JSON mid-object and corrupt it.
+ */
+function trimResultsToLimit(
+  results: { page: number; context: string }[],
+  envelope: { query: string; totalMatches: number },
+): { results: { page: number; context: string }[]; dropped: number } {
+  const serializedLength = (
+    rows: { page: number; context: string }[],
+  ): number =>
+    JSON.stringify(
+      {
+        query: envelope.query,
+        totalMatches: envelope.totalMatches,
+        results: rows,
+        // Reserve headroom for the longest note we might attach after trimming
+        // (the "capped" note and the "omitted" note can both be present).
+        note: "x".repeat(400),
+      },
+      null,
+      2,
+    ).length;
+
+  if (serializedLength(results) <= CHARACTER_LIMIT) {
+    return { results, dropped: 0 };
+  }
+
+  // Binary-search the largest prefix of results that serializes under the
+  // limit, so a huge match set doesn't require a linear walk.
+  let lo = 0;
+  let hi = results.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (serializedLength(results.slice(0, mid)) <= CHARACTER_LIMIT) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
+  }
+
+  const kept = results.slice(0, lo);
+  return { results: kept, dropped: results.length - kept.length };
+}
 
 /** Build a global RegExp matcher for either a literal substring or a user regex. */
 function buildMatcher(

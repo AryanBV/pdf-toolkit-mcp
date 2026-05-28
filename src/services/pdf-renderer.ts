@@ -36,10 +36,31 @@ export interface RenderedPage {
   height: number;
 }
 
+/**
+ * Per-page sink invoked once per rendered page. Returning a promise lets the
+ * caller stream each encoded image to disk before the next page is rendered,
+ * so file-mode rendering never holds more than one page buffer resident.
+ */
+export type OnPage = (page: RenderedPage) => void | Promise<void>;
+
 export interface RenderOptions {
   pageIndices: number[];
   dpi: number;
   format: "png" | "jpeg";
+  /**
+   * Optional per-page callback. When provided, each encoded page is handed to
+   * the callback and then released (file mode) — the function resolves to an
+   * empty array and never accumulates buffers. When omitted, all rendered pages
+   * are collected and returned (inline mode, bounded to a few small pages).
+   */
+  onPage?: OnPage;
+}
+
+/** A page's intrinsic size in PDF points (72 per inch), from PDFium. */
+export interface PageSize {
+  pageIndex: number;
+  widthPoints: number;
+  heightPoints: number;
 }
 
 function encodePng(
@@ -71,12 +92,13 @@ function encodeJpeg(
   return new Uint8Array(encoded.data);
 }
 
-export async function renderPdfPages(
-  pdfBytes: Uint8Array,
-  opts: RenderOptions,
-): Promise<RenderedPage[]> {
-  const scale = opts.dpi / 72;
+type PdfiumDocument = Awaited<ReturnType<PdfiumLibrary["loadDocument"]>>;
 
+/**
+ * Initialize PDFium (lazy + cached) and parse the document, mapping failures to
+ * the shared PdfError codes. Callers must `destroy()` the returned document.
+ */
+async function openDocument(pdfBytes: Uint8Array): Promise<PdfiumDocument> {
   let library: PdfiumLibrary;
   try {
     library = await getLibrary();
@@ -88,9 +110,8 @@ export async function renderPdfPages(
     );
   }
 
-  let document: Awaited<ReturnType<PdfiumLibrary["loadDocument"]>>;
   try {
-    document = await library.loadDocument(pdfBytes);
+    return await library.loadDocument(pdfBytes);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new PdfError(
@@ -98,8 +119,49 @@ export async function renderPdfPages(
       "CORRUPT_PDF",
     );
   }
+}
+
+/**
+ * Read intrinsic page sizes (in PDF points) for the given page indices straight
+ * from PDFium. This lets callers compute a safe inline DPI without a second
+ * parse via pdf-lib (which would surface a misleading error on encrypted/corrupt
+ * input) — failures map to the same CORRUPT_PDF/WASM_LOAD_FAILED codes as a render.
+ */
+export async function getPageSizes(
+  pdfBytes: Uint8Array,
+  pageIndices: number[],
+): Promise<PageSize[]> {
+  const document = await openDocument(pdfBytes);
+  try {
+    return pageIndices.map((pageIndex) => {
+      const page = document.getPage(pageIndex);
+      const { originalWidth, originalHeight } = page.getOriginalSize();
+      return {
+        pageIndex,
+        widthPoints: originalWidth,
+        heightPoints: originalHeight,
+      };
+    });
+  } finally {
+    try {
+      document.destroy();
+    } catch (err) {
+      logger.warn("Failed to destroy PDFium document", err);
+    }
+  }
+}
+
+export async function renderPdfPages(
+  pdfBytes: Uint8Array,
+  opts: RenderOptions,
+): Promise<RenderedPage[]> {
+  const scale = opts.dpi / 72;
+  const document = await openDocument(pdfBytes);
 
   try {
+    // In streaming (file) mode we never retain buffers: each page is handed to
+    // the callback and then dropped. In inline mode (no callback) we collect the
+    // small, DPI-capped pages to return.
     const results: RenderedPage[] = [];
 
     for (const pageIndex of opts.pageIndices) {
@@ -129,12 +191,20 @@ export async function renderPdfPages(
           ? encodePng(rendered.data, rendered.width, rendered.height)
           : encodeJpeg(rendered.data, rendered.width, rendered.height);
 
-      results.push({
+      const renderedPage: RenderedPage = {
         pageIndex,
         data,
         width: rendered.width,
         height: rendered.height,
-      });
+      };
+
+      if (opts.onPage) {
+        // Stream this page out and release it before rendering the next one,
+        // so at most one encoded page buffer is resident at a time.
+        await opts.onPage(renderedPage);
+      } else {
+        results.push(renderedPage);
+      }
     }
 
     return results;

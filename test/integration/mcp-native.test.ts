@@ -188,6 +188,65 @@ describe("MCP-native enhancements (inline render, prompts, resources)", () => {
     expect(text).toMatch(/flatten/);
   });
 
+  it("create-invoice parses line items into a pdf_create_from_template call", async () => {
+    const result = await client.getPrompt({
+      name: "create-invoice",
+      arguments: {
+        company_name: "Acme Co",
+        client_name: "Globex",
+        invoice_number: "INV-007",
+        items: "Web design:2:1500;Hosting:12:29.99",
+      },
+    });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    const first = result.messages[0];
+    expect(first.role).toBe("user");
+    expect(first.content.type).toBe("text");
+    const text = first.content.type === "text" ? first.content.text : "";
+
+    expect(text).toMatch(/pdf_create_from_template/);
+    expect(text).toContain("INV-007");
+
+    // The embedded JSON block must contain the parsed line items.
+    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+    expect(jsonMatch).not.toBeNull();
+    const payload = JSON.parse(jsonMatch![1]) as {
+      templateName: string;
+      data: {
+        companyName: string;
+        clientName: string;
+        invoiceNumber: string;
+        items: { description: string; quantity: number; unitPrice: number }[];
+      };
+    };
+    expect(payload.templateName).toBe("invoice");
+    expect(payload.data.companyName).toBe("Acme Co");
+    expect(payload.data.clientName).toBe("Globex");
+    expect(payload.data.invoiceNumber).toBe("INV-007");
+    expect(payload.data.items).toEqual([
+      { description: "Web design", quantity: 2, unitPrice: 1500 },
+      { description: "Hosting", quantity: 12, unitPrice: 29.99 },
+    ]);
+  });
+
+  it("fill-form returns a two-step discover-then-fill workflow", async () => {
+    const result = await client.getPrompt({
+      name: "fill-form",
+      arguments: { pdf_path: "/forms/application.pdf" },
+    });
+
+    expect(result.messages.length).toBeGreaterThan(0);
+    const first = result.messages[0];
+    expect(first.role).toBe("user");
+    expect(first.content.type).toBe("text");
+    const text = first.content.type === "text" ? first.content.text : "";
+
+    expect(text).toContain("/forms/application.pdf");
+    expect(text).toMatch(/pdf_get_form_fields/);
+    expect(text).toMatch(/pdf_fill_form/);
+  });
+
   // ── 3. templates resource ───────────────────────────────────────────────
   it("lists the templates resource", async () => {
     const { resources } = await client.listResources();

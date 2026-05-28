@@ -77,6 +77,84 @@ describe("create tools (react-pdf + remark engine)", () => {
     await rm(workDir, { recursive: true, force: true });
   });
 
+  // ── pdf_create ────────────────────────────────────────────────────────
+  it("pdf_create writes a real PDF and reports its fileSize", async () => {
+    const out = join(workDir, "plain-create.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create",
+      arguments: {
+        outputPath: out,
+        content: "Hello from pdf_create.\nSecond line of body text.",
+        title: "Created Doc",
+        author: "Tester",
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(payload.fileSize).toBeTruthy();
+    expect(payload.pageCount).toBeGreaterThanOrEqual(1);
+
+    // Output bytes are a real PDF.
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+
+    // Body text survives.
+    const text = await extractAll(client, out);
+    expect(text).toContain("Hello from pdf_create.");
+  }, 30_000);
+
+  // ── pdf_fill_form ─────────────────────────────────────────────────────
+  it("pdf_fill_form fills a form field (happy path) and reports fileSize", async () => {
+    const src = join(workDir, "fill-src.pdf");
+    const out = join(workDir, "fill-out.pdf");
+    await writeFile(src, await makeFormPdf());
+
+    const result = (await client.callTool({
+      name: "pdf_fill_form",
+      arguments: {
+        filePath: src,
+        fields: { fullName: "Ada Lovelace" },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(payload.filledFields).toBe(1);
+    expect(payload.fileSize).toBeTruthy();
+
+    // Output is a real PDF and the field carries the filled value.
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    const tf = doc.getForm().getTextField("fullName");
+    expect(tf.getText()).toBe("Ada Lovelace");
+  }, 30_000);
+
+  it("pdf_fill_form returns FIELD_NOT_FOUND for an unknown field name", async () => {
+    const src = join(workDir, "fill-src2.pdf");
+    const out = join(workDir, "fill-out2.pdf");
+    await writeFile(src, await makeFormPdf());
+
+    const result = (await client.callTool({
+      name: "pdf_fill_form",
+      arguments: {
+        filePath: src,
+        fields: { noSuchField: "value" },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain("FIELD_NOT_FOUND");
+    expect(text).toMatch(/not found/i);
+    expect(text).not.toMatch(NO_STACK);
+  }, 30_000);
+
   // ── pdf_create_from_markdown ──────────────────────────────────────────
   it("renders markdown (heading, paragraph, list, table, code) to a valid PDF", async () => {
     const out = join(workDir, "md-rich.pdf");
@@ -309,6 +387,7 @@ describe("create tools (react-pdf + remark engine)", () => {
 
     expect(result.isError).toBe(true);
     const text = textOf(result);
+    expect(text).toContain("UNSUPPORTED_FORMAT");
     expect(text).toMatch(/decode|corrupt|not a valid/i);
     expect(text).not.toMatch(NO_STACK);
   }, 30_000);
@@ -331,7 +410,40 @@ describe("create tools (react-pdf + remark engine)", () => {
 
     expect(result.isError).toBe(true);
     const text = textOf(result);
+    expect(text).toContain("FILE_NOT_FOUND");
     expect(text).toMatch(/not found/i);
+    expect(text).not.toMatch(NO_STACK);
+  }, 30_000);
+
+  it("embedding onto an out-of-range page returns PAGE_OUT_OF_RANGE", async () => {
+    const pdf = join(workDir, "host3.pdf");
+    const png = join(workDir, "tiny.png");
+    await writeFile(pdf, await makePlainPdf());
+    // A minimal valid 1x1 PNG so decoding succeeds and the page check is hit.
+    await writeFile(
+      png,
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+        "base64",
+      ),
+    );
+
+    const result = (await client.callTool({
+      name: "pdf_embed_image",
+      arguments: {
+        filePath: pdf,
+        imagePath: png,
+        page: 99,
+        x: 10,
+        y: 10,
+        outputPath: join(workDir, "embedded3.pdf"),
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain("PAGE_OUT_OF_RANGE");
+    expect(text).toMatch(/exceeds document length/i);
     expect(text).not.toMatch(NO_STACK);
   }, 30_000);
 });

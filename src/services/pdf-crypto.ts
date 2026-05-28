@@ -1,4 +1,6 @@
 import { createRequire } from "node:module";
+import type { PDFDocument } from "@pdfme/pdf-lib";
+import pdfLib from "@pdfme/pdf-lib";
 import { PdfError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 
@@ -21,15 +23,53 @@ interface QpdfInstance {
   FS: QpdfFS;
 }
 
+// The factory's declared type only exposes `locateFile`, but every Emscripten
+// module also accepts `print`/`printErr` overrides. We widen the option bag so
+// we can route any stray engine output to the stderr logger (Rule 1) instead of
+// the default console.log printer, which would corrupt the MCP stdio channel.
 type QpdfFactory = (opts: {
   locateFile: (path: string) => string;
+  print?: (text: string) => void;
+  printErr?: (text: string) => void;
 }) => Promise<QpdfInstance>;
 
 let modulePromise: Promise<QpdfInstance> | null = null;
 
+/**
+ * Run `fn` with the global console's log/error methods temporarily routed to the
+ * stderr logger. The qpdf-wasm Emscripten glue captures `console.log.bind(...)`
+ * at module-evaluation time (during the dynamic import below) and uses it as its
+ * default stdout printer — it does NOT honor the factory's `print` option in the
+ * shipped minified build. Guarding the import + factory call means that captured
+ * reference points at our logger, so the engine can never write to stdout and
+ * corrupt the MCP stdio transport (CLAUDE.md Rule 1) — independent of the
+ * library's internals.
+ *
+ * We reach the console through `globalThis` rather than the `console` binding so
+ * this guard installer (whose whole purpose is to enforce Rule 1) is not itself
+ * flagged by the `no-console` lint rule.
+ */
+async function withStdoutGuard<T>(fn: () => Promise<T>): Promise<T> {
+  const con: Console = globalThis.console;
+  const route = (...args: unknown[]): void => logger.debug("[qpdf]", args);
+  const origLog = con.log;
+  const origInfo = con.info;
+  const origError = con.error;
+  con.log = route;
+  con.info = route;
+  con.error = route;
+  try {
+    return await fn();
+  } finally {
+    con.log = origLog;
+    con.info = origInfo;
+    con.error = origError;
+  }
+}
+
 async function getQpdf(): Promise<QpdfInstance> {
   if (!modulePromise) {
-    modulePromise = (async () => {
+    modulePromise = withStdoutGuard(async () => {
       // Dynamic import INSIDE the function so the WASM module is only resolved
       // and instantiated when an encryption is actually requested.
       const imported = (await import("@neslinesli93/qpdf-wasm")) as unknown as {
@@ -43,10 +83,16 @@ async function getQpdf(): Promise<QpdfInstance> {
       const wasmPath =
         require.resolve("@neslinesli93/qpdf-wasm/dist/qpdf.wasm");
 
+      // Pass explicit print/printErr overrides so Emscripten builds that honor
+      // the option bag route output to the stderr logger rather than console.log
+      // (the default printer). The withStdoutGuard wrapper covers builds that
+      // hardcode console.log instead.
       return createModule({
         locateFile: () => wasmPath,
+        print: (text: string) => logger.debug("[qpdf]", text),
+        printErr: (text: string) => logger.debug("[qpdf]", text),
       });
-    })().catch((err: unknown) => {
+    }).catch((err: unknown) => {
       // Reset so a transient failure does not poison every future call.
       modulePromise = null;
       throw err;
@@ -65,6 +111,38 @@ export interface EncryptOptions {
 }
 
 /**
+ * Reject input that qpdf cannot meaningfully (re-)encrypt before we hand it to
+ * the engine. We attempt a parse with @pdfme/pdf-lib (dual-import pattern):
+ *  - an already-encrypted PDF surfaces as ENCRYPTED_PDF (CLAUDE.md Limitation #7
+ *    promises this rather than the opaque INTERNAL qpdf exit code), and
+ *  - structurally broken bytes surface as CORRUPT_PDF.
+ * This keeps INTERNAL reserved for genuinely unexpected qpdf failures.
+ */
+async function ensureEncryptable(pdfBytes: Uint8Array): Promise<void> {
+  let doc: PDFDocument | undefined;
+  try {
+    // Without ignoreEncryption, an encrypted document throws EncryptedPDFError;
+    // malformed bytes throw a parse error (MissingPDFHeaderError, etc.).
+    doc = await pdfLib.PDFDocument.load(pdfBytes);
+  } catch (err) {
+    if (err instanceof pdfLib.EncryptedPDFError) {
+      throw new PdfError("Input PDF is already encrypted.", "ENCRYPTED_PDF");
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw new PdfError(
+      `Could not read the PDF (it may be corrupt): ${message}`,
+      "CORRUPT_PDF",
+    );
+  }
+
+  // Defense in depth: some encrypted PDFs parse without throwing yet expose the
+  // /Encrypt dictionary via isEncrypted. Treat those as already-encrypted too.
+  if (doc.isEncrypted) {
+    throw new PdfError("Input PDF is already encrypted.", "ENCRYPTED_PDF");
+  }
+}
+
+/**
  * Encrypt a PDF with AES (256-bit by default) using qpdf-wasm. The owner
  * password defaults to the user password when omitted. Returns the encrypted
  * PDF bytes.
@@ -73,6 +151,11 @@ export async function encryptPdf(
   pdfBytes: Uint8Array,
   opts: EncryptOptions,
 ): Promise<Uint8Array> {
+  // Pre-flight: reject already-encrypted / corrupt input with a stable code
+  // before spinning up qpdf (whose generic non-zero exit would otherwise be
+  // reported as INTERNAL).
+  await ensureEncryptable(pdfBytes);
+
   let qpdf: QpdfInstance;
   try {
     qpdf = await getQpdf();
@@ -116,11 +199,13 @@ export async function encryptPdf(
       OUTPUT_PATH,
     );
 
-    const exitCode = qpdf.callMain(args);
+    // Guard stdout for the actual encryption run too: qpdf only prints to stdout
+    // when emitting output there, but a guard makes Rule 1 hold unconditionally.
+    const exitCode = await withStdoutGuard(async () => qpdf.callMain(args));
 
     if (exitCode !== 0) {
       throw new PdfError(
-        `qpdf encryption failed (exit code ${exitCode}). The input may be corrupt or already encrypted.`,
+        `qpdf encryption failed (exit code ${exitCode}).`,
         "INTERNAL",
       );
     }

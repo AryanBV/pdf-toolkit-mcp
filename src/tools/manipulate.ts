@@ -23,12 +23,7 @@ import {
   parsePageRange,
   toUint8Array,
 } from "../utils/validation.js";
-import {
-  PdfError,
-  toolError,
-  toolSuccess,
-  toErrorResult,
-} from "../utils/errors.js";
+import { PdfError, toolSuccess, toErrorResult } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
 import { MAX_MERGE_FILES, MAX_PAGE_WARNING } from "../constants.js";
 
@@ -75,6 +70,8 @@ export function registerManipulateTools(server: McpServer): void {
             ),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the input PDFs are never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -173,6 +170,8 @@ export function registerManipulateTools(server: McpServer): void {
             ),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the source PDF is never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -251,6 +250,8 @@ export function registerManipulateTools(server: McpServer): void {
             .describe("Absolute path for the rotated output PDF"),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the source PDF is never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -329,10 +330,14 @@ export function registerManipulateTools(server: McpServer): void {
             ),
         })
         .strict(),
+      // destructiveHint:false — the tool only writes a new file at outputPath
+      // (which may overwrite an existing file there), never mutates the input.
+      // idempotentHint:false — AES-256 uses random salt/IV, so re-running with
+      // identical inputs produces different ciphertext bytes each time.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
     },
@@ -500,6 +505,8 @@ export function registerManipulateTools(server: McpServer): void {
             .describe("Font size for page numbers (6–24). Defaults to 10."),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the source PDF is never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -549,37 +556,71 @@ export function registerManipulateTools(server: McpServer): void {
           const textWidth = font.widthOfTextAtSize(text, fSize);
           const margin = 40;
 
-          let x: number;
-          let y: number;
+          // Honor any pre-existing display rotation (/Rotate). The page number
+          // must read upright and sit in the viewer-relative corner, so we
+          // compute the anchor in VIEWER space (where the page looks upright)
+          // then map it back to the page's own (unrotated) coordinate system.
+          const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+          const sideways = rotation === 90 || rotation === 270;
+          // Viewer-space dimensions (width/height swap for 90/270).
+          const vw = sideways ? height : width;
+          const vh = sideways ? width : height;
 
+          // Anchor (baseline-left of the text) in viewer space, origin bottom-left.
+          let vx: number;
+          let vy: number;
           switch (pos) {
             case "bottom-center":
-              x = (width - textWidth) / 2;
-              y = margin / 2;
+              vx = (vw - textWidth) / 2;
+              vy = margin / 2;
               break;
             case "bottom-right":
-              x = width - margin - textWidth;
-              y = margin / 2;
+              vx = vw - margin - textWidth;
+              vy = margin / 2;
               break;
             case "top-center":
-              x = (width - textWidth) / 2;
-              y = height - margin / 2;
+              vx = (vw - textWidth) / 2;
+              vy = vh - margin / 2;
               break;
             case "top-right":
-              x = width - margin - textWidth;
-              y = height - margin / 2;
+              vx = vw - margin - textWidth;
+              vy = vh - margin / 2;
               break;
             default:
-              x = (width - textWidth) / 2;
-              y = margin / 2;
+              vx = (vw - textWidth) / 2;
+              vy = margin / 2;
           }
 
+          // Map the viewer-space anchor to page (unrotated) space. /Rotate is a
+          // clockwise display rotation, so the inverse maps viewer→page.
+          let x: number;
+          let y: number;
+          switch (rotation) {
+            case 90:
+              x = width - vy;
+              y = vx;
+              break;
+            case 180:
+              x = width - vx;
+              y = height - vy;
+              break;
+            case 270:
+              x = vy;
+              y = height - vx;
+              break;
+            default: // 0
+              x = vx;
+              y = vy;
+          }
+
+          // Counter-rotate the text so it renders upright in the viewer.
           page.drawText(text, {
             x,
             y,
             size: fSize,
             font,
             color: pdfLib.rgb(0.4, 0.4, 0.4),
+            rotate: pdfLib.degrees(rotation),
           });
         }
 
@@ -648,6 +689,8 @@ export function registerManipulateTools(server: McpServer): void {
             .describe("Barcode type. Defaults to qrcode."),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the source PDF is never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -676,26 +719,39 @@ export function registerManipulateTools(server: McpServer): void {
         const totalPages = pdfDoc.getPageCount();
 
         if (page > totalPages) {
-          return toolError(
+          throw new PdfError(
             `Page ${page} exceeds document length (${totalPages} pages).`,
+            "PAGE_OUT_OF_RANGE",
           );
         }
 
         const image = await pdfDoc.embedPng(pngBuffer);
         const targetPage = pdfDoc.getPage(page - 1);
 
+        // Preserve the symbology's intrinsic aspect ratio. Square codes (qrcode,
+        // datamatrix, azteccode) keep `size` for both dimensions; rectangular
+        // ones (code128, ean13, pdf417) are scaled to fit inside a `size`×`size`
+        // bounding box so they are never squashed. `scaleToFit` returns the
+        // largest aspect-preserving box that fits, so the longer intrinsic side
+        // maps to `size`.
+        const { width: drawWidth, height: drawHeight } = image.scaleToFit(
+          barcodeSize,
+          barcodeSize,
+        );
+
         // Bounds check: the barcode is placed with its bottom-left corner at
         // (x, y) (PDF origin is bottom-left). Reject placements that fall off
-        // the page so the barcode is never silently clipped or invisible.
+        // the page so the barcode is never silently clipped or invisible. The
+        // check runs against the ACTUAL drawn box, not an assumed square.
         const { width: pageWidth, height: pageHeight } = targetPage.getSize();
         if (
           x < 0 ||
           y < 0 ||
-          x + barcodeSize > pageWidth ||
-          y + barcodeSize > pageHeight
+          x + drawWidth > pageWidth ||
+          y + drawHeight > pageHeight
         ) {
           throw new PdfError(
-            `Barcode does not fit on page ${page}. Page size is ${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} points; requested placement is a ${barcodeSize}pt square with its bottom-left corner at (${x}, ${y}), which extends to (${x + barcodeSize}, ${y + barcodeSize}). Reduce size or move x/y so 0 <= x, 0 <= y, x+size <= ${pageWidth.toFixed(0)}, y+size <= ${pageHeight.toFixed(0)}.`,
+            `Barcode does not fit on page ${page}. Page size is ${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} points; the barcode draws as ${drawWidth.toFixed(0)}x${drawHeight.toFixed(0)} points with its bottom-left corner at (${x}, ${y}), extending to (${(x + drawWidth).toFixed(0)}, ${(y + drawHeight).toFixed(0)}). Reduce size or move x/y so 0 <= x, 0 <= y, x+width <= ${pageWidth.toFixed(0)}, y+height <= ${pageHeight.toFixed(0)}.`,
             "INVALID_INPUT",
           );
         }
@@ -703,8 +759,8 @@ export function registerManipulateTools(server: McpServer): void {
         targetPage.drawImage(image, {
           x,
           y,
-          width: barcodeSize,
-          height: barcodeSize,
+          width: drawWidth,
+          height: drawHeight,
         });
 
         await savePdf(pdfDoc, resolvedOutput);
@@ -716,6 +772,10 @@ export function registerManipulateTools(server: McpServer): void {
           type: barcodeType,
           position: { x, y },
           size: barcodeSize,
+          drawnSize: {
+            width: Math.round(drawWidth),
+            height: Math.round(drawHeight),
+          },
           fileSize,
         });
       } catch (error) {
@@ -754,6 +814,8 @@ export function registerManipulateTools(server: McpServer): void {
             ),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the source PDF is never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -776,15 +838,19 @@ export function registerManipulateTools(server: McpServer): void {
         for (const part of orderParts) {
           const num = parseInt(part, 10);
           if (isNaN(num) || num < 1 || num > totalPages) {
-            return toolError(
+            throw new PdfError(
               `Invalid page number: ${part}. Must be between 1 and ${totalPages}.`,
+              "INVALID_INPUT",
             );
           }
           indices.push(num - 1); // Convert to 0-indexed
         }
 
         if (indices.length > 2000) {
-          return toolError("Page order exceeds maximum of 2000 output pages.");
+          throw new PdfError(
+            "Page order exceeds maximum of 2000 output pages.",
+            "RESOURCE_LIMIT",
+          );
         }
 
         const newDoc = await createNewPdf();
@@ -848,6 +914,8 @@ export function registerManipulateTools(server: McpServer): void {
             ),
         })
         .strict(),
+      // destructiveHint:false — writes a new file at outputPath (may overwrite an
+      // existing file there); the source PDF is never modified.
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

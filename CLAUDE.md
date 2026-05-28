@@ -18,7 +18,7 @@ Multi-engine architecture: **@pdfme/pdf-lib** manipulates existing PDFs + **@rea
 | Dependency                                | Version                          | Why                                                                                                                                         |
 | ----------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | TypeScript                                | strict, ESM (`"type": "module"`) | Type safety, all `.ts` imports use `.js` extension (Node16 resolution)                                                                      |
-| Node.js                                   | >= 18                            | Minimum LTS with stable ESM support                                                                                                         |
+| Node.js                                   | >= 20                            | Conservative non-breaking floor (18 and 20.x are EOL); CI tests 20/22/24, 22 or 24 LTS recommended                                          |
 | `@modelcontextprotocol/sdk`               | ^1.29.0                          | MCP protocol implementation. Use `server.registerTool()` — NOT `.tool()` (deprecated)                                                       |
 | `@pdfme/pdf-lib`                          | ^5.5.10                          | Fork of abandoned `pdf-lib`. Existing PDF manipulation (merge, split, rotate, watermark, embed, page numbers, reorder, delete, flatten, QR) |
 | `unpdf`                                   | ^1.4.0                           | Text extraction, metadata, and positional text (pdf.js). Replaces `pdfjs-dist` which requires Node 22+ canvas bindings                      |
@@ -133,8 +133,20 @@ Throw a `PdfError(message, code)` from validators/services and let the tool's
 into a clean error `ToolResult` (never leaks a stack). Codes come from the
 `ErrorCode` union in `src/utils/errors.ts` (`INVALID_INPUT`, `FILE_NOT_FOUND`,
 `NOT_A_PDF`, `CORRUPT_PDF`, `ENCRYPTED_PDF`, `PAGE_OUT_OF_RANGE`,
-`FIELD_NOT_FOUND`, `UNSUPPORTED_FORMAT`, `RESOURCE_LIMIT`, `WASM_LOAD_FAILED`,
-`INTERNAL`, …) so clients can branch on a stable code rather than message text.
+`FIELD_NOT_FOUND`, `UNSUPPORTED_FORMAT`, `RESOURCE_LIMIT`, `PERMISSION_DENIED`,
+`WASM_LOAD_FAILED`, `INTERNAL`, …) so clients can branch on a stable code rather
+than message text.
+
+The shared validators in `src/utils/validation.ts` all throw coded `PdfError`s
+(not bare `Error`s): `validatePdfPath` → `FILE_NOT_FOUND` / `INVALID_INPUT` /
+`NOT_A_PDF`; `validateOutputPath` → `INVALID_INPUT` (missing parent);
+`validateFontPath` → `FILE_NOT_FOUND` / `UNSUPPORTED_FORMAT`; `validateImagePath`
+→ `FILE_NOT_FOUND` / `UNSUPPORTED_FORMAT`; `validateFileSize` → `RESOURCE_LIMIT`;
+`parsePageRange` → `INVALID_INPUT` (malformed) / `PAGE_OUT_OF_RANGE`;
+`loadExistingPdf` → `ENCRYPTED_PDF` / `CORRUPT_PDF`. `toErrorResult` formats a
+`PdfError` as `Error [CODE]: message` and a bare `Error` as `Error: message`.
+The message text is essentially unchanged from earlier versions (only the code
+prefix was added), so substring assertions in tests still hold.
 
 ```typescript
 import { PdfError, toErrorResult, toolSuccess } from "../utils/errors.js";
@@ -186,7 +198,7 @@ Every rule has a reason. Do not remove or weaken any of these.
 
 12. **All tool names: `pdf_` prefix, snake_case** — Consistent naming convention across all 22 tools. Examples: `pdf_extract_text`, `pdf_merge`, `pdf_fill_form`.
 
-13. **Every tool declares annotations** — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`. These enable MCP clients to make informed decisions about auto-approval and confirmation prompts.
+13. **Every tool declares annotations** — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`. These enable MCP clients to make informed decisions about auto-approval and confirmation prompts. Write tools declare `destructiveHint: false` (MCP-01 rationale): their semantics are "produce output" — they write a new file at `outputPath`. Because `outputPath` may point at an existing file, a write _can_ overwrite it, but the annotation describes the tool's intent (emit a result file), not a guarantee that no file is ever replaced. Treat `destructiveHint: false` as "creates output", and pick an `outputPath` that does not collide with a file you want to keep.
 
 14. **`@pdfme/pdf-lib` ESM Import Pattern** — The package's `exports` field maps `import.node` to a CJS build, so Node.js cannot resolve named ESM imports at runtime. Use this dual-import pattern:
 
@@ -206,7 +218,7 @@ See `src/services/pdf-writer.ts` for the canonical example. All files that impor
 
 15. **Lazy-load heavy WASM/render engines inside handlers** — `@react-pdf/renderer` + remark (`pdf-creator.ts`), `@hyzyla/pdfium` (`pdf-renderer.ts`), and `@neslinesli93/qpdf-wasm` (`pdf-crypto.ts`) are only `await import(...)`-ed the first time a tool that needs them runs. This keeps server cold-start fast for clients that just read PDFs and never trigger those code paths. Cache the loaded module in a module-level promise so it initializes at most once.
 
-16. **Heavy engines are pure WASM/JS — zero native deps** — PDFium and qpdf are shipped as WebAssembly, and react-pdf is pure JS. There are no node-gyp builds, prebuilt binaries, or canvas bindings, so `npx -y @aryanbv/pdf-toolkit-mcp` works on Node >= 18 across platforms without a compiler. When wiring a WASM engine, resolve its `.wasm` asset relative to the package (e.g. `require.resolve(".../qpdf.wasm")`) rather than assuming a CWD.
+16. **Heavy engines are pure WASM/JS — zero native deps** — PDFium and qpdf are shipped as WebAssembly, and react-pdf is pure JS. There are no node-gyp builds, prebuilt binaries, or canvas bindings, so `npx -y @aryanbv/pdf-toolkit-mcp` works on Node >= 20 across platforms without a compiler. When wiring a WASM engine, resolve its `.wasm` asset relative to the package (e.g. `require.resolve(".../qpdf.wasm")`) rather than assuming a CWD.
 
 17. **fileSize in every write tool response** — All tools that write files must include `fileSize` (human-readable string like "12.3 KB") in their response. Use `getFileSize()` from `src/utils/file-utils.ts`.
 
@@ -278,4 +290,4 @@ real stdio integration test and a stdout-pollution regression test. ESLint +
 Prettier are enforced via Husky + lint-staged pre-commit hooks and GitHub
 Actions CI.
 
-**Note**: MCP Inspector (`@modelcontextprotocol/inspector`) requires Node >= 22.7.5 to run. The server itself works on Node >= 18.
+**Note**: MCP Inspector (`@modelcontextprotocol/inspector`) requires Node >= 22.7.5 to run. The server itself requires Node >= 20 (22 or 24 LTS recommended).

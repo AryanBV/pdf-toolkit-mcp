@@ -33,6 +33,15 @@ async function makeTwoPagePdf(): Promise<Uint8Array> {
   return doc.save();
 }
 
+async function makeManyPagePdf(pageCount: number): Promise<Uint8Array> {
+  const doc = await pdfLib.PDFDocument.create();
+  for (let i = 0; i < pageCount; i++) {
+    const page = doc.addPage([300, 400]);
+    page.drawText(`Hello page ${i + 1}`);
+  }
+  return doc.save();
+}
+
 describe("pdf_render_pages", () => {
   let client: Client;
   let transport: StdioClientTransport;
@@ -193,5 +202,68 @@ describe("pdf_render_pages", () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/limit of 50|exceeding the limit/i);
+  }, 30_000);
+
+  // RENDER-1: file mode must stream each page straight to disk (one buffer
+  // resident at a time) and still produce exactly one image file per requested
+  // page. A multi-page render exercises the onPage callback path end to end.
+  it("file mode writes exactly one image file per page (streamed)", async () => {
+    const manyDir = await mkdtemp(join(tmpdir(), "pdf-render-many-"));
+    const manyPath = join(manyDir, "many.pdf");
+    const pageCount = 12;
+    await writeFile(manyPath, await makeManyPagePdf(pageCount));
+
+    const result = (await client.callTool({
+      name: "pdf_render_pages",
+      arguments: {
+        filePath: manyPath,
+        pages: `1-${pageCount}`,
+        format: "png",
+        outputDir: manyDir,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.pageCount).toBe(pageCount);
+    expect(payload.images).toHaveLength(pageCount);
+
+    // Every reported page is present exactly once, in order, and the file each
+    // points to actually exists on disk (proves each page was written, not just
+    // accumulated and reported).
+    const reportedPages = payload.images.map(
+      (img: { page: number }) => img.page,
+    );
+    expect(reportedPages).toEqual(
+      Array.from({ length: pageCount }, (_, i) => i + 1),
+    );
+    for (const img of payload.images) {
+      const bytes = await readFile(img.path);
+      const decoded = PNG.sync.read(bytes);
+      expect(decoded.width).toBeGreaterThan(0);
+      expect(decoded.height).toBeGreaterThan(0);
+    }
+
+    await rm(manyDir, { recursive: true, force: true });
+  }, 60_000);
+
+  // RENDER-3: inline mode derives page sizes from PDFium (the render engine),
+  // not a second pdf-lib parse — so a corrupt/garbage PDF surfaces one clean,
+  // coded error rather than a misleading double-parse message or a leaked stack.
+  it("returns a clean coded error for garbage bytes in inline mode", async () => {
+    const garbageInlinePath = join(workDir, "garbage-inline.pdf");
+    await writeFile(garbageInlinePath, "definitely not a pdf\n");
+
+    const result = (await client.callTool({
+      name: "pdf_render_pages",
+      arguments: { filePath: garbageInlinePath, inline: true },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text.length).toBeGreaterThan(0);
+    // Coded error format from toErrorResult — no leaked stack frames.
+    expect(text).toMatch(/Error \[[A-Z_]+\]:/);
+    expect(text).not.toMatch(/\bat .*\(.*:\d+:\d+\)/);
   }, 30_000);
 });

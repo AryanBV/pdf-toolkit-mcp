@@ -437,10 +437,20 @@ function renderBlockNode(
       return renderBlockquote(node, ctx, key);
     case "thematicBreak":
       return h(View, { key, style: ctx.styles.hr });
-    case "image":
-      return node.url
-        ? h(Image, { key, src: node.url, style: ctx.styles.image })
+    case "image": {
+      // Security: do NOT forward arbitrary image URLs/paths to react-pdf's
+      // resolver, which would fetch remote URLs (SSRF) or read local files
+      // (path traversal / info disclosure) from whatever the markdown contains.
+      // Only inline `data:` URIs are safe to render; for any other scheme or
+      // file path, skip the image and surface its alt text instead.
+      if (node.url && /^data:/i.test(node.url.trim())) {
+        return h(Image, { key, src: node.url, style: ctx.styles.image });
+      }
+      const { Text } = ctx.rp;
+      return node.alt
+        ? h(Text, { key, style: ctx.styles.paragraph }, `[${node.alt}]`)
         : null;
+    }
     default:
       // html, definition, footnoteDefinition, yaml, etc. — skip silently rather
       // than crash on a feature we don't render.

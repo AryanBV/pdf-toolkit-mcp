@@ -1,4 +1,10 @@
-import type { PDFDocument, PDFDict, PDFArray, PDFRef } from "@pdfme/pdf-lib";
+import type {
+  PDFDocument,
+  PDFDict,
+  PDFArray,
+  PDFRef,
+  PDFObject,
+} from "@pdfme/pdf-lib";
 import pdfLib from "@pdfme/pdf-lib";
 import { logger } from "../utils/logger.js";
 
@@ -103,14 +109,29 @@ function topLevelFieldRef(
  * deterministic first-seen order). The widget→page map is the source of truth
  * for which widgets are "live" — after `copyPages` a widget's own `/P` may still
  * point at the un-added intermediate page copy, so it cannot be trusted.
+ *
+ * `sharedWidgetFields` collects the top-level field refs that own a widget seen
+ * on MORE THAN ONE surviving page. This happens only when a single source page
+ * carrying form widgets is duplicated in the requested order (e.g.
+ * `pdf_reorder_pages` with `[0,0]`): pdf-lib's copier caches by source ref, so
+ * both page copies reference the SAME widget ref. A `Map<widgetRef→pageRef>`
+ * cannot represent a widget that lives on two pages — the second occurrence
+ * overwrites the first and the field's `/P` ends up pointing at only one page.
+ * Rather than report such a field as truthfully `preserved`, the caller drops it.
  */
 function scanSurvivingWidgets(
   dest: PDFDocument,
   pages: { node: PDFDict; pageRef: PDFRef }[],
-): { topFields: PDFRef[]; liveWidgetToPage: Map<string, PDFRef> } {
+): {
+  topFields: PDFRef[];
+  liveWidgetToPage: Map<string, PDFRef>;
+  sharedWidgetFields: Set<string>;
+} {
   const seen = new Set<string>();
   const topFields: PDFRef[] = [];
   const liveWidgetToPage = new Map<string, PDFRef>();
+  const widgetPageCount = new Map<string, number>();
+  const sharedWidgetFields = new Set<string>();
 
   for (const { node, pageRef } of pages) {
     const annots = node.lookupMaybe(PDFName.of("Annots"), PDFArrayCtor);
@@ -118,9 +139,19 @@ function scanSurvivingWidgets(
     for (let i = 0; i < annots.size(); i++) {
       const annotRef = annots.get(i);
       if (!(annotRef instanceof PDFRefCtor)) continue;
-      liveWidgetToPage.set(annotRef.toString(), pageRef);
+      const widgetKey = annotRef.toString();
 
+      // A widget ref reached from two different surviving pages means the same
+      // source page was duplicated — the widget cannot belong to both copies.
+      const prevCount = widgetPageCount.get(widgetKey) ?? 0;
+      widgetPageCount.set(widgetKey, prevCount + 1);
       const topRef = topLevelFieldRef(dest, annotRef);
+      if (prevCount > 0 && topRef) {
+        sharedWidgetFields.add(topRef.toString());
+      }
+
+      liveWidgetToPage.set(widgetKey, pageRef);
+
       if (!topRef) continue;
       const key = topRef.toString();
       if (seen.has(key)) continue;
@@ -128,7 +159,7 @@ function scanSurvivingWidgets(
       topFields.push(topRef);
     }
   }
-  return { topFields, liveWidgetToPage };
+  return { topFields, liveWidgetToPage, sharedWidgetFields };
 }
 
 /** Set or rename a field's partial name (`/T`), preserving the source encoding. */
@@ -192,35 +223,53 @@ function pruneFieldKids(
   return true;
 }
 
-/** Merge the source AcroForm's /DR (default resources) into dest's /DR. */
-function mergeDefaultResources(destAcro: PDFDict, srcAcro: PDFDict): void {
+/**
+ * Merge the source AcroForm's /DR (default resources) into dest's /DR.
+ *
+ * Source `/DR` entries are values/refs that live in the SOURCE document's
+ * context. Writing them straight into the dest AcroForm would leak a cross-
+ * context reference (a dest object pointing at a ref that only exists in the
+ * source's object table) — invalid PDF. Every source value is therefore copied
+ * into the dest context via `PDFObjectCopier` before being set.
+ */
+function mergeDefaultResources(
+  dest: PDFDocument,
+  src: PDFDocument,
+  destAcro: PDFDict,
+  srcAcro: PDFDict,
+): void {
   const srcDR = srcAcro.lookupMaybe(PDFName.of("DR"), PDFDictCtor);
   if (!srcDR) return;
 
+  const copier = pdfLib.PDFObjectCopier.for(src.context, dest.context);
+  const intoDest = <T extends PDFObject>(value: T): T => copier.copy(value);
+
   let destDR = destAcro.lookupMaybe(PDFName.of("DR"), PDFDictCtor);
   if (!destDR) {
-    destDR = destAcro.context.obj({}) as PDFDict;
+    destDR = dest.context.obj({}) as PDFDict;
     destAcro.set(PDFName.of("DR"), destDR);
   }
 
   for (const [key, value] of srcDR.entries()) {
     const existing = destDR.get(key);
     if (existing === undefined) {
-      destDR.set(key, value);
+      // Copy the whole resource category (e.g. /Font dict) into dest first.
+      destDR.set(key, intoDest(value));
       continue;
     }
     // Both have this resource category (e.g. /Font): merge sub-entries.
     const existingDict =
       existing instanceof PDFRefCtor
-        ? destDR.context.lookupMaybe(existing, PDFDictCtor)
+        ? dest.context.lookupMaybe(existing, PDFDictCtor)
         : existing instanceof PDFDictCtor
           ? existing
           : undefined;
-    const incomingDict = destDR.context.lookupMaybe(value, PDFDictCtor);
+    // Resolve the incoming category dict in the SOURCE context (it may be a ref).
+    const incomingDict = src.context.lookupMaybe(value, PDFDictCtor);
     if (existingDict && incomingDict) {
       for (const [subKey, subValue] of incomingDict.entries()) {
         if (existingDict.get(subKey) === undefined) {
-          existingDict.set(subKey, subValue);
+          existingDict.set(subKey, intoDest(subValue));
         }
       }
     }
@@ -290,7 +339,8 @@ export async function copyPagesPreservingForms(
     }
 
     const usedNames = existingDestFieldNames(dest);
-    const { topFields, liveWidgetToPage } = scanSurvivingWidgets(dest, pages);
+    const { topFields, liveWidgetToPage, sharedWidgetFields } =
+      scanSurvivingWidgets(dest, pages);
 
     for (const fieldRef of topFields) {
       const field = ctx.lookupMaybe(fieldRef, PDFDictCtor);
@@ -299,6 +349,17 @@ export async function copyPagesPreservingForms(
       const originalName =
         decodeFieldName(field.get(PDFName.of("T"))) ?? "field";
       candidateNames.push(originalName);
+
+      // A field whose widget appears on a duplicated page cannot be safely
+      // preserved: a single widget ref cannot point its `/P` at two distinct
+      // page copies. Report it honestly as dropped rather than counting it as
+      // preserved while it renders on only one of the duplicates (Rule 8).
+      if (sharedWidgetFields.has(fieldRef.toString())) {
+        report.dropped.push(
+          `${originalName} (field on a duplicated page cannot be safely preserved)`,
+        );
+        continue;
+      }
 
       // Prune widgets/kids whose pages did not survive (split/delete case).
       const stillLive = pruneFieldKids(dest, fieldRef, liveWidgetToPage);
@@ -333,10 +394,15 @@ export async function copyPagesPreservingForms(
     // 3. Merge default resources/appearance and force appearance regeneration.
     try {
       const srcAcro = src.getForm().acroForm.dict;
-      mergeDefaultResources(destAcro, srcAcro);
+      mergeDefaultResources(dest, src, destAcro, srcAcro);
       if (!destAcro.has(PDFName.of("DA"))) {
         const srcDA = srcAcro.get(PDFName.of("DA"));
-        if (srcDA !== undefined) destAcro.set(PDFName.of("DA"), srcDA);
+        // /DA is typically a PDFString literal, but copy it into the dest
+        // context regardless so no source-context ref leaks across.
+        if (srcDA !== undefined) {
+          const copier = pdfLib.PDFObjectCopier.for(src.context, dest.context);
+          destAcro.set(PDFName.of("DA"), copier.copy(srcDA));
+        }
       }
     } catch (err) {
       logger.warn("Failed to merge AcroForm default resources", err);

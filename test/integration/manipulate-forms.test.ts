@@ -326,4 +326,134 @@ describe("form-preserving merge / split / delete_pages / reorder", () => {
     expect(text.length).toBeGreaterThan(0);
     expect(text).not.toMatch(/\bat .*\(.*:\d+:\d+\)/);
   }, 30_000);
+
+  // ── FPE-1: duplicated form page is reported honestly in `dropped` ──────
+  it("reorder with a DUPLICATE form page reports the field in dropped, not preserved", async () => {
+    // Single page carrying one form field; reorder duplicates it (1,1). The
+    // shared widget ref cannot belong to two page copies, so the field must be
+    // dropped (truthful) — never falsely counted as preserved (Rule 8).
+    const src = join(workDir, "dup-form-src.pdf");
+    const out = join(workDir, "dup-form-out.pdf");
+    await writeFile(src, await makeFormPdf("Alice"));
+
+    const result = (await client.callTool({
+      name: "pdf_reorder_pages",
+      arguments: { filePath: src, pageOrder: "1,1", outputPath: out },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.pageCount).toBe(2);
+
+    // The form fields on the duplicated page must NOT be reported as preserved.
+    expect(payload.formFields.preserved).toBe(0);
+    expect(payload.formFields.dropped.length).toBeGreaterThan(0);
+    // The reason must be explicit about duplication.
+    expect(payload.formFields.dropped.join(" ")).toMatch(/duplicat/i);
+    // And the original field name must appear in the dropped report.
+    expect(payload.formFields.dropped.join(" ")).toMatch(/\bname\b/);
+
+    // Re-loading the output must NOT surface those fields as interactive.
+    const names = await fieldNamesOf(out);
+    expect(names).toEqual([]);
+  }, 30_000);
+
+  // ── TEST-01: write tools return fileSize + reload as valid PDFs ───────
+  it("pdf_rotate_pages writes a reloadable PDF with fileSize", async () => {
+    const src = join(workDir, "rotate-src.pdf");
+    const out = join(workDir, "rotate-out.pdf");
+    await writeFile(src, await makePlainPdf(["r1", "r2"]));
+
+    const result = (await client.callTool({
+      name: "pdf_rotate_pages",
+      arguments: { filePath: src, degrees: 90, outputPath: out },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(payload.degrees).toBe(90);
+    expect(typeof payload.fileSize).toBe("string");
+    expect(payload.fileSize.length).toBeGreaterThan(0);
+
+    const bytes = await readFile(out);
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    expect(doc.getPageCount()).toBe(2);
+    expect(doc.getPage(0).getRotation().angle).toBe(90);
+  }, 30_000);
+
+  it("pdf_add_page_numbers writes a reloadable PDF with fileSize", async () => {
+    const src = join(workDir, "pgnum-src.pdf");
+    const out = join(workDir, "pgnum-out.pdf");
+    await writeFile(src, await makePlainPdf(["a", "b", "c"]));
+
+    const result = (await client.callTool({
+      name: "pdf_add_page_numbers",
+      arguments: { filePath: src, outputPath: out },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(payload.totalPages).toBe(3);
+    expect(typeof payload.fileSize).toBe("string");
+    expect(payload.fileSize.length).toBeGreaterThan(0);
+
+    const bytes = await readFile(out);
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    expect(doc.getPageCount()).toBe(3);
+  }, 30_000);
+
+  // ── PG-NUM-ROTATE: page numbers on a pre-rotated page succeed ─────────
+  it("pdf_add_page_numbers handles a pre-rotated page (preserves rotation, fileSize)", async () => {
+    // Build a 90°-rotated single-page PDF.
+    const rotatedSrc = join(workDir, "pgnum-rotated-src.pdf");
+    const out = join(workDir, "pgnum-rotated-out.pdf");
+    const doc = await pdfLib.PDFDocument.create();
+    const page = doc.addPage([300, 400]);
+    page.drawText("rotated", { x: 20, y: 360, size: 12 });
+    page.setRotation(pdfLib.degrees(90));
+    await writeFile(rotatedSrc, await doc.save());
+
+    const result = (await client.callTool({
+      name: "pdf_add_page_numbers",
+      arguments: {
+        filePath: rotatedSrc,
+        outputPath: out,
+        position: "bottom-center",
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.totalPages).toBe(1);
+    expect(typeof payload.fileSize).toBe("string");
+
+    // The page's display rotation must be preserved (number drawn upright via
+    // the rotate option, not by un-rotating the page).
+    const bytes = await readFile(out);
+    const reloaded = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    expect(reloaded.getPage(0).getRotation().angle).toBe(90);
+  }, 30_000);
+
+  it("pdf_add_watermark writes a reloadable PDF with fileSize", async () => {
+    const src = join(workDir, "wm-src.pdf");
+    const out = join(workDir, "wm-out.pdf");
+    await writeFile(src, await makePlainPdf(["w1", "w2"]));
+
+    const result = (await client.callTool({
+      name: "pdf_add_watermark",
+      arguments: { filePath: src, text: "DRAFT", outputPath: out },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(typeof payload.fileSize).toBe("string");
+    expect(payload.fileSize.length).toBeGreaterThan(0);
+
+    const bytes = await readFile(out);
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    expect(doc.getPageCount()).toBe(2);
+  }, 30_000);
 });

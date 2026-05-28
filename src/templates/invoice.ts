@@ -70,15 +70,27 @@ export async function buildInvoice(
   const paymentTerms = data.paymentTerms ?? "";
   const taxRate = data.taxRate ?? 0;
 
-  const items = (data.items ?? []).map((item) => ({
-    description: item.description ?? "",
-    quantity: item.quantity ?? 1,
-    unitPrice: item.unitPrice ?? 0,
-  }));
+  // Round each line total to cents BEFORE summing so the displayed line
+  // amounts always reconcile with the subtotal/total. Without this, sub-cent
+  // unit prices (e.g. 0.005) make the rounded per-line displays not add up to
+  // a raw quantity*unitPrice subtotal. `lineTotal` is the single rounded base
+  // used for both display and the subtotal.
+  const roundCents = (n: number): number => Math.round(n * 100) / 100;
 
-  const subtotal = items.reduce((s, it) => s + it.quantity * it.unitPrice, 0);
-  const tax = subtotal * (taxRate / 100);
-  const total = subtotal + tax;
+  const items = (data.items ?? []).map((item) => {
+    const quantity = item.quantity ?? 1;
+    const unitPrice = item.unitPrice ?? 0;
+    return {
+      description: item.description ?? "",
+      quantity,
+      unitPrice,
+      lineTotal: roundCents(quantity * unitPrice),
+    };
+  });
+
+  const subtotal = roundCents(items.reduce((s, it) => s + it.lineTotal, 0));
+  const tax = roundCents(subtotal * (taxRate / 100));
+  const total = roundCents(subtotal + tax);
   const money = (n: number): string => `$${n.toFixed(2)}`;
 
   const styles = StyleSheet.create({
@@ -172,11 +184,7 @@ export async function buildInvoice(
       h(Text, { style: [styles.td, styles.colDesc] }, item.description),
       h(Text, { style: [styles.td, styles.colQty] }, String(item.quantity)),
       h(Text, { style: [styles.td, styles.colPrice] }, money(item.unitPrice)),
-      h(
-        Text,
-        { style: [styles.td, styles.colTotal] },
-        money(item.quantity * item.unitPrice),
-      ),
+      h(Text, { style: [styles.td, styles.colTotal] }, money(item.lineTotal)),
     ),
   );
 

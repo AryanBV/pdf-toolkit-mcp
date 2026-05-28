@@ -207,5 +207,56 @@ describe("pdf_encrypt (AES-256) / pdf_compare / pdf_embed_qr_code bounds", () =>
     const payload = JSON.parse(textOf(result));
     expect(payload.outputPath).toBe(outputPath);
     expect(payload.fileSize).toMatch(/KB$/);
+    // A QR code is square: the aspect-preserving box stays square.
+    expect(payload.drawnSize.width).toBe(payload.drawnSize.height);
+  }, 30_000);
+
+  // ── QR-NONSQUARE: rectangular symbologies keep their aspect ratio ─────
+  it("embeds a code128 barcode with a non-square (aspect-preserved) box", async () => {
+    const inputPath = join(workDir, "barcode-src.pdf");
+    const outputPath = join(workDir, "barcode-out.pdf");
+    await writeFile(inputPath, await makePdf(["barcode target page"]));
+
+    const result = (await client.callTool({
+      name: "pdf_embed_qr_code",
+      arguments: {
+        filePath: inputPath,
+        outputPath,
+        content: "ABC-12345",
+        page: 1,
+        x: 50,
+        y: 50,
+        size: 100,
+        type: "code128",
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(outputPath);
+    expect(payload.type).toBe("code128");
+    // code128 is wider than it is tall: the drawn box must NOT be squashed
+    // into a square. width is the bounding dimension; height is smaller.
+    expect(payload.drawnSize.width).toBeGreaterThan(payload.drawnSize.height);
+    expect(payload.drawnSize.width).toBeLessThanOrEqual(100);
+    expect(payload.drawnSize.height).toBeLessThan(100);
+  }, 30_000);
+
+  // ── reorder error codes ───────────────────────────────────────────────
+  it("reorder reports INVALID_INPUT for an out-of-range page number", async () => {
+    const src = join(workDir, "reorder-bad-src.pdf");
+    const out = join(workDir, "reorder-bad-out.pdf");
+    await writeFile(src, await makePdf(["p1", "p2"]));
+
+    const result = (await client.callTool({
+      name: "pdf_reorder_pages",
+      arguments: { filePath: src, pageOrder: "1,3", outputPath: out }, // only 2 pages
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain("INVALID_INPUT");
+    expect(text).toMatch(/invalid page number/i);
+    expect(text).not.toMatch(/\bat .*\(.*:\d+:\d+\)/); // no stack frames
   }, 30_000);
 });

@@ -4,7 +4,7 @@ MCP server for PDF manipulation — render pages to images for vision, create fr
 
 [![npm version](https://img.shields.io/npm/v/@aryanbv/pdf-toolkit-mcp)](https://www.npmjs.com/package/@aryanbv/pdf-toolkit-mcp)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![tools](https://img.shields.io/badge/tools-22-orange)]()
 
 ## Install
@@ -337,6 +337,11 @@ Just ask naturally:
 - "Embed a QR code with our URL on the cover page"
 - "Reorder pages as 3,1,2 in report.pdf"
 
+## Errors & Output Semantics
+
+- **Coded errors**: Validation and load failures throw a `PdfError` carrying a stable error code, surfaced to the client as `Error [CODE]: message` (e.g. `Error [FILE_NOT_FOUND]: ...`, `Error [NOT_A_PDF]: ...`, `Error [PAGE_OUT_OF_RANGE]: ...`, `Error [ENCRYPTED_PDF]: ...`, `Error [RESOURCE_LIMIT]: ...`). Clients can branch on the code instead of parsing message text; stack traces are never leaked.
+- **Write-tool output semantics**: Write tools produce a new file at `outputPath` and return that path plus the file size as text (MCP has no file content type). Because `outputPath` may name an existing file, a write can overwrite it — yet these tools declare `destructiveHint: false`. The annotation reflects "produces output" semantics (the tool's job is to emit a result file), not a guarantee that no existing file is ever replaced. Choose an `outputPath` that does not collide with a file you want to keep.
+
 ## Known Limitations
 
 - **Merge/Split/Reorder/Delete**: Form fields are preserved; colliding field names are auto-namespaced and reported as `renamed`. Exotic forms that can't be safely reconstructed are reported as `dropped` rather than failing the operation.
@@ -362,7 +367,7 @@ Multi-engine architecture for maximum capability — all engines are pure WASM/J
 
 ## Requirements
 
-- Node.js >= 18
+- Node.js >= 20 (Node 18 and the 20.x line are EOL; Node 22 or 24 LTS recommended)
 
 ## Development
 
