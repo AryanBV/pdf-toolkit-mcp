@@ -7,6 +7,7 @@ import { registerManipulateTools } from "./tools/manipulate.js";
 import { registerCreateTools } from "./tools/create.js";
 import { registerRenderTools } from "./tools/render.js";
 import { registerPrompts } from "./prompts/index.js";
+import { registerResources } from "./resources/index.js";
 import { createRequire } from "node:module";
 
 // Single source of truth for the version — resolved from package.json at runtime
@@ -24,6 +25,7 @@ registerManipulateTools(server);
 registerCreateTools(server);
 registerRenderTools(server);
 registerPrompts(server);
+registerResources(server);
 
 const transport = new StdioServerTransport();
 

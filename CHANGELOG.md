@@ -24,6 +24,13 @@ high-fidelity creation, and real quality infrastructure.
   on the remaining pages.
 - **New tool `pdf_flatten`** — bake form-field values into static content,
   removing interactivity.
+- `pdf_render_pages` gains an **`inline`** option that returns rendered pages as
+  inline image content blocks for vision-capable clients (max 5 pages, DPI
+  auto-capped to protect context) — read a scanned PDF in a single call.
+- Guided-workflow **prompts**: `read-scanned-pdf`, `pdf-to-markdown`,
+  `merge-and-flatten` (alongside the existing `create-invoice`, `fill-form`).
+- A `pdf-toolkit://templates` **MCP resource** listing the available
+  `pdf_create_from_template` templates and their accepted fields.
 
 ### Fixed
 

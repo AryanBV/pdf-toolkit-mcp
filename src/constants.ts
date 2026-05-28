@@ -13,6 +13,12 @@ export const MAX_RENDER_DPI = 300;
 export const MAX_RENDER_PAGES = 50;
 export const MAX_RENDER_DIMENSION = 5_000;
 
+// Inline rendering limits (pdf_render_pages inline:true) — base64 image blocks
+// are returned directly in the tool result, so keep them small to protect the
+// LLM context window.
+export const MAX_INLINE_RENDER_PAGES = 5;
+export const MAX_INLINE_DIMENSION = 1_500;
+
 // Text-extraction / search / markdown limits
 export const MAX_SEARCH_RESULTS = 500;
 export const MAX_MARKDOWN_INPUT_CHARS = 5_000_000;

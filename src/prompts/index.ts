@@ -114,4 +114,157 @@ export function registerPrompts(server: McpServer): void {
       };
     },
   );
+
+  // ── read-scanned-pdf ───────────────────────────────────────────────────
+  server.registerPrompt(
+    "read-scanned-pdf",
+    {
+      title: "Read a Scanned / Image PDF",
+      description:
+        "Guide reading a scanned or image-only PDF by rendering its pages for vision, with a fallback to text extraction for digital PDFs.",
+      argsSchema: {
+        pdf_path: z.string().describe("Absolute path to the PDF to read"),
+      },
+    },
+    async ({ pdf_path }) => {
+      const text = [
+        `Read the PDF at \`${pdf_path}\`. Many PDFs are scanned or image-only and contain no extractable text layer, so follow this workflow:`,
+        "",
+        `**Step 1** — Try a quick text extraction to detect whether this is a digital PDF:`,
+        "```json",
+        JSON.stringify(
+          { tool: "pdf_extract_text", filePath: pdf_path },
+          null,
+          2,
+        ),
+        "```",
+        "",
+        `**Step 2** — If Step 1 returns little or no usable text (a scanned/image PDF), SEE the pages directly by rendering them inline for vision:`,
+        "```json",
+        JSON.stringify(
+          { tool: "pdf_render_pages", filePath: pdf_path, inline: true },
+          null,
+          2,
+        ),
+        "```",
+        "",
+        'Inline rendering returns up to 5 pages as images you can read visually. For longer documents, pass a `pages` range (e.g. "1-5") and render in batches.',
+      ].join("\n");
+
+      return {
+        messages: [
+          { role: "user" as const, content: { type: "text" as const, text } },
+        ],
+      };
+    },
+  );
+
+  // ── pdf-to-markdown ────────────────────────────────────────────────────
+  server.registerPrompt(
+    "pdf-to-markdown",
+    {
+      title: "Convert PDF to Markdown",
+      description:
+        "Guide converting a PDF into structured Markdown, then optionally summarizing it.",
+      argsSchema: {
+        pdf_path: z.string().describe("Absolute path to the PDF to convert"),
+      },
+    },
+    async ({ pdf_path }) => {
+      const text = [
+        `Convert the PDF at \`${pdf_path}\` to Markdown:`,
+        "",
+        `**Step 1** — Convert the document to structured Markdown:`,
+        "```json",
+        JSON.stringify(
+          { tool: "pdf_to_markdown", filePath: pdf_path },
+          null,
+          2,
+        ),
+        "```",
+        "",
+        "**Step 2** — Optionally, summarize the resulting Markdown or extract the parts the user asked about. Preserve headings, lists, and tables from the conversion.",
+      ].join("\n");
+
+      return {
+        messages: [
+          { role: "user" as const, content: { type: "text" as const, text } },
+        ],
+      };
+    },
+  );
+
+  // ── merge-and-flatten ──────────────────────────────────────────────────
+  server.registerPrompt(
+    "merge-and-flatten",
+    {
+      title: "Merge PDFs and Flatten Forms",
+      description:
+        "Guide merging multiple PDFs into one and flattening any form fields into static content.",
+      argsSchema: {
+        pdf_paths: z
+          .string()
+          .describe(
+            "Absolute paths to the PDFs to merge, separated by commas or semicolons (in order)",
+          ),
+        output_path: z.string().describe("Absolute path for the merged PDF"),
+      },
+    },
+    async ({ pdf_paths, output_path }) => {
+      const paths = pdf_paths
+        .split(/[;,]/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+
+      const text = [
+        `Merge these PDFs into \`${output_path}\` and flatten any form fields:`,
+        "",
+        "```json",
+        JSON.stringify(paths, null, 2),
+        "```",
+        "",
+        `**Option A (one step)** — Merge and flatten in a single call. \`pdf_merge\` preserves form fields by namespacing them per source document, and \`flatten:true\` bakes them into static content:`,
+        "```json",
+        JSON.stringify(
+          {
+            tool: "pdf_merge",
+            filePaths: paths,
+            outputPath: output_path,
+            flatten: true,
+          },
+          null,
+          2,
+        ),
+        "```",
+        "",
+        `**Option B (two steps)** — Merge first, then flatten the result into a new file (the flatten output must differ from its input):`,
+        "```json",
+        JSON.stringify(
+          { tool: "pdf_merge", filePaths: paths, outputPath: output_path },
+          null,
+          2,
+        ),
+        "```",
+        "```json",
+        JSON.stringify(
+          {
+            tool: "pdf_flatten",
+            filePath: output_path,
+            outputPath: "<a different output path>",
+          },
+          null,
+          2,
+        ),
+        "```",
+        "",
+        "Use Option A unless you need to inspect the merged document before flattening.",
+      ].join("\n");
+
+      return {
+        messages: [
+          { role: "user" as const, content: { type: "text" as const, text } },
+        ],
+      };
+    },
+  );
 }
