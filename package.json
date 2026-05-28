@@ -1,6 +1,6 @@
 {
   "name": "@aryanbv/pdf-toolkit-mcp",
-  "version": "0.2.4",
+  "version": "1.0.0",
   "mcpName": "io.github.AryanBV/pdf-toolkit-mcp",
   "description": "MCP server for PDF manipulation — 22 tools: render pages to images for vision, Markdown/template→PDF, AES-256 encrypt, form-preserving merge/split, fill forms, search, compare, QR codes, watermark. Zero-config, TypeScript-native.",
   "type": "module",
