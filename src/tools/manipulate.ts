@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import pdfLib from "@pdfme/pdf-lib";
 import { z } from "zod";
-import { encryptPDF } from "@pdfsmaller/pdf-encrypt-lite";
+import { diffLines } from "diff";
 import { toBuffer as bwipToBuffer } from "@bwip-js/node";
 import {
   loadExistingPdf,
@@ -11,6 +11,8 @@ import {
   savePdf,
   checkForFormFields,
 } from "../services/pdf-writer.js";
+import { encryptPdf } from "../services/pdf-crypto.js";
+import { extractPdfText, getPdfPageCount } from "../services/pdf-reader.js";
 import {
   validatePdfPath,
   validateOutputPath,
@@ -18,7 +20,12 @@ import {
   parsePageRange,
   toUint8Array,
 } from "../utils/validation.js";
-import { toolError, toolSuccess } from "../utils/errors.js";
+import {
+  PdfError,
+  toolError,
+  toolSuccess,
+  toErrorResult,
+} from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
 import { MAX_MERGE_FILES, MAX_PAGE_WARNING } from "../constants.js";
 
@@ -263,7 +270,7 @@ export function registerManipulateTools(server: McpServer): void {
     "pdf_encrypt",
     {
       description:
-        "Encrypt a PDF with password protection (RC4 128-bit). Requires a user password to open. Owner password controls editing permissions.",
+        "Encrypt a PDF with AES-256 password protection. Requires a user password to open. Owner password controls editing permissions (defaults to the user password).",
       inputSchema: z
         .object({
           filePath: z
@@ -301,27 +308,122 @@ export function registerManipulateTools(server: McpServer): void {
         await validateFileSize(resolvedPath);
         const resolvedOutput = await validateOutputPath(outputPath, filePath);
 
-        const buffer = await readFile(resolvedPath);
-        const pdfBytes = toUint8Array(buffer);
+        const pdfBytes = toUint8Array(await readFile(resolvedPath));
 
-        const encryptedBytes = (await encryptPDF(
-          pdfBytes,
+        const encryptedBytes = await encryptPdf(pdfBytes, {
           userPassword,
-          ownerPassword ?? null,
-        )) as unknown as Uint8Array;
+          ownerPassword,
+          keyLength: 256,
+        });
 
         await writeFile(resolvedOutput, encryptedBytes);
         const fileSize = await getFileSize(resolvedOutput);
 
         return toolSuccess({
           outputPath: resolvedOutput,
-          encrypted: true,
+          encryption: "AES-256",
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
+      }
+    },
+  );
+
+  // ── pdf_compare ─────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_compare",
+    {
+      description:
+        "Compare the extracted text of two PDFs page by page and report the differences. Returns identical:true when the text matches. Compares text only — visual/layout changes that don't alter text are not detected.",
+      inputSchema: z
+        .object({
+          filePathA: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the first (baseline) PDF file"),
+          filePathB: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the second (comparison) PDF file"),
+          pages: z
+            .string()
+            .max(256)
+            .optional()
+            .describe(
+              "Page range to compare, e.g. '1-5' or '1,3,5'. Defaults to all pages.",
+            ),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ filePathA, filePathB, pages }) => {
+      try {
+        const resolvedA = await validatePdfPath(filePathA);
+        const resolvedB = await validatePdfPath(filePathB);
+        await validateFileSize(resolvedA);
+        await validateFileSize(resolvedB);
+
+        const pageCountA = await getPdfPageCount(resolvedA);
+        const pageCountB = await getPdfPageCount(resolvedB);
+
+        let pageIndices: number[] | undefined;
+        if (pages) {
+          // Validate the range against the longer document so a page that exists
+          // in only one file can still be diffed (the missing side shows as empty).
+          pageIndices = parsePageRange(pages, Math.max(pageCountA, pageCountB));
+        }
+
+        const [textA, textB] = await Promise.all([
+          extractPdfText(resolvedA, pageIndices),
+          extractPdfText(resolvedB, pageIndices),
+        ]);
+
+        const byPageA = new Map(textA.pages.map((p) => [p.page, p.text ?? ""]));
+        const byPageB = new Map(textB.pages.map((p) => [p.page, p.text ?? ""]));
+        const pageNumbers = [
+          ...new Set([...byPageA.keys(), ...byPageB.keys()]),
+        ].sort((a, b) => a - b);
+
+        const differences: { page: number; added: string; removed: string }[] =
+          [];
+
+        for (const pageNum of pageNumbers) {
+          const a = byPageA.get(pageNum) ?? "";
+          const b = byPageB.get(pageNum) ?? "";
+          if (a === b) continue;
+
+          const changes = diffLines(a, b);
+          const added = changes
+            .filter((c) => c.added)
+            .map((c) => c.value)
+            .join("");
+          const removed = changes
+            .filter((c) => c.removed)
+            .map((c) => c.value)
+            .join("");
+
+          differences.push({
+            page: pageNum,
+            added: added.trim(),
+            removed: removed.trim(),
+          });
+        }
+
+        return toolSuccess({
+          identical: differences.length === 0,
+          pageCountA,
+          pageCountB,
+          comparedPages: pages ?? "all",
+          differences,
+        });
+      } catch (error) {
+        return toErrorResult(error);
       }
     },
   );
@@ -550,6 +652,22 @@ export function registerManipulateTools(server: McpServer): void {
         const image = await pdfDoc.embedPng(pngBuffer);
         const targetPage = pdfDoc.getPage(page - 1);
 
+        // Bounds check: the barcode is placed with its bottom-left corner at
+        // (x, y) (PDF origin is bottom-left). Reject placements that fall off
+        // the page so the barcode is never silently clipped or invisible.
+        const { width: pageWidth, height: pageHeight } = targetPage.getSize();
+        if (
+          x < 0 ||
+          y < 0 ||
+          x + barcodeSize > pageWidth ||
+          y + barcodeSize > pageHeight
+        ) {
+          throw new PdfError(
+            `Barcode does not fit on page ${page}. Page size is ${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} points; requested placement is a ${barcodeSize}pt square with its bottom-left corner at (${x}, ${y}), which extends to (${x + barcodeSize}, ${y + barcodeSize}). Reduce size or move x/y so 0 <= x, 0 <= y, x+size <= ${pageWidth.toFixed(0)}, y+size <= ${pageHeight.toFixed(0)}.`,
+            "INVALID_INPUT",
+          );
+        }
+
         targetPage.drawImage(image, {
           x,
           y,
@@ -569,9 +687,7 @@ export function registerManipulateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );

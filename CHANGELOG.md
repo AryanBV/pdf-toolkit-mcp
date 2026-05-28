@@ -19,6 +19,7 @@ high-fidelity creation, and real quality infrastructure.
   consumption. Honest scope: best on clean digital PDFs.
 - **New tool `pdf_search`** — find text across a PDF, returning page numbers
   and surrounding snippets; literal or regex, case-insensitive by default.
+- **New tool `pdf_compare`** — page-by-page text diff between two PDFs.
 
 ### Fixed
 
@@ -39,9 +40,14 @@ high-fidelity creation, and real quality infrastructure.
   of truth that can no longer drift from the published version.
 - Dockerfile builds from source in a multi-stage build instead of pinning a
   stale published version.
+- `pdf_encrypt` now uses **AES-256** (qpdf-wasm) instead of RC4 128-bit.
+- `pdf_embed_qr_code` rejects placements that fall off the page instead of
+  silently clipping the barcode.
 
 ### Security
 
 - Pinned patched versions of transitive dependencies via `overrides`, resolving
   7 advisories (1 high) originating from the MCP SDK's HTTP-transport chain and
   jsdom (none of which the stdio server loads at runtime).
+- Removed the `@pdfsmaller/pdf-encrypt-lite` (RC4) dependency in favor of
+  AES-256 encryption.

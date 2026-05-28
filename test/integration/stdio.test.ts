@@ -30,6 +30,7 @@ const EXPECTED_TOOLS = [
   "pdf_render_pages",
   "pdf_to_markdown",
   "pdf_search",
+  "pdf_compare",
 ].sort();
 
 describe("MCP stdio transport", () => {
