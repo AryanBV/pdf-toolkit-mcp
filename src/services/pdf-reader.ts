@@ -109,7 +109,11 @@ export async function extractPositionedText(
         // is the most reliable size signal; pdf.js' `height` field is 0 for some
         // fonts. Fall back to `height` when the matrix yields nothing.
         const matrixSize = Math.hypot(transform[2], transform[3]);
-        const fontSize = matrixSize > 0 ? matrixSize : raw.height;
+        // Fall back to a sane default when both the matrix scale and the
+        // reported height are 0 (some Type3/embedded fonts), so downstream
+        // heading/line heuristics never divide by or compare against 0.
+        const fontSize =
+          matrixSize > 0 ? matrixSize : raw.height > 0 ? raw.height : 12;
 
         items.push({
           str: raw.str,

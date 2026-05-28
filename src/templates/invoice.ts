@@ -12,6 +12,12 @@ const h = React.createElement;
 //   { companyName, clientName, invoiceNumber, invoiceDate, items:[{description,quantity,unitPrice}] }
 // plus optional address / tax / terms fields. Numbers are coerced so callers
 // may send them as strings.
+// LLMs often send "" for an unspecified numeric field. z.coerce.number() turns
+// "" into 0, which would silently produce a $0 line item or 0% tax instead of
+// letting the builder's defaults apply — so map empty/null to undefined first.
+const emptyToUndefined = (v: unknown): unknown =>
+  v === "" || v === null ? undefined : v;
+
 export const invoiceSchema = z
   .object({
     companyName: z.string().optional(),
@@ -23,13 +29,22 @@ export const invoiceSchema = z
     dueDate: z.string().optional(),
     notes: z.string().optional(),
     paymentTerms: z.string().optional(),
-    taxRate: z.coerce.number().min(0).max(100).optional(),
+    taxRate: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().min(0).max(100).optional(),
+    ),
     items: z
       .array(
         z.object({
           description: z.string().optional(),
-          quantity: z.coerce.number().optional(),
-          unitPrice: z.coerce.number().optional(),
+          quantity: z.preprocess(
+            emptyToUndefined,
+            z.coerce.number().optional(),
+          ),
+          unitPrice: z.preprocess(
+            emptyToUndefined,
+            z.coerce.number().optional(),
+          ),
         }),
       )
       .optional(),

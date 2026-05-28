@@ -12,12 +12,7 @@ import {
   validateFileSize,
   parsePageRange,
 } from "../utils/validation.js";
-import {
-  PdfError,
-  toolError,
-  toolSuccess,
-  toErrorResult,
-} from "../utils/errors.js";
+import { PdfError, toolSuccess, toErrorResult } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
 import { DEFAULT_EXTRACT_PAGES, MAX_SEARCH_RESULTS } from "../constants.js";
 import { layoutToMarkdown } from "./markdown-from-layout.js";
@@ -85,9 +80,7 @@ export function registerReadTools(server: McpServer): void {
 
         return toolSuccess(response);
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -135,9 +128,7 @@ export function registerReadTools(server: McpServer): void {
 
         return toolSuccess(metadata);
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );

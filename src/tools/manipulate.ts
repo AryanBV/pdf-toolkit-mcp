@@ -140,9 +140,7 @@ export function registerManipulateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -220,9 +218,7 @@ export function registerManipulateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -298,9 +294,7 @@ export function registerManipulateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -600,9 +594,7 @@ export function registerManipulateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -823,9 +815,7 @@ export function registerManipulateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );

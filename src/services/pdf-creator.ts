@@ -221,10 +221,14 @@ interface InlineContext {
 }
 
 function inlineStyleFor(ctx: InlineContext): Style | undefined {
-  if (ctx.bold && ctx.italic) return ctx.styles.boldItalic;
-  if (ctx.bold) return ctx.styles.bold;
-  if (ctx.italic) return ctx.styles.italic;
-  return undefined;
+  let base: Style | undefined;
+  if (ctx.bold && ctx.italic) base = ctx.styles.boldItalic;
+  else if (ctx.bold) base = ctx.styles.bold;
+  else if (ctx.italic) base = ctx.styles.italic;
+  // Strikethrough must combine with bold/italic and propagate to nested Text,
+  // since react-pdf does not reliably inherit textDecoration across nesting.
+  if (ctx.strike) return { ...(base ?? {}), textDecoration: "line-through" };
+  return base;
 }
 
 function renderPhrasing(

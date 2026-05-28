@@ -85,7 +85,13 @@ export async function encryptPdf(
   }
 
   const keyLength = opts.keyLength ?? 256;
-  const ownerPassword = opts.ownerPassword ?? opts.userPassword;
+  // An empty owner password tells qpdf "no owner password", which silently
+  // removes permission protection — treat it (and undefined) as "reuse the user
+  // password" so the document is never weaker than the caller intended.
+  const ownerPassword =
+    opts.ownerPassword && opts.ownerPassword.length > 0
+      ? opts.ownerPassword
+      : opts.userPassword;
 
   const { FS } = qpdf;
 

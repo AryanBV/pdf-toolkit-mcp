@@ -214,9 +214,7 @@ export function registerCreateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -374,9 +372,7 @@ export function registerCreateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -501,9 +497,7 @@ export function registerCreateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );

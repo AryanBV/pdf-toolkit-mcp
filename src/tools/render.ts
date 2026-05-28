@@ -207,13 +207,18 @@ export function registerRenderTools(server: McpServer): void {
           images.push({ page: pageNumber, path: outPath, fileSize });
         }
 
-        return toolSuccess({
+        const response: Record<string, unknown> = {
           outputDir: resolvedOutputDir,
           format: renderFormat,
           dpi: renderDpi,
           pageCount: images.length,
+          totalPages,
           images,
-        });
+        };
+        if (images.length < totalPages) {
+          response.note = `Rendered ${images.length} of ${totalPages} pages. Pass a 'pages' range to render the rest.`;
+        }
+        return toolSuccess(response);
       } catch (err) {
         return toErrorResult(err);
       }
