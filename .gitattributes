@@ -1,0 +1,12 @@
+# Normalize line endings to LF in the repo (prevents CRLF/LF churn and keeps
+# Prettier's default endOfLine:lf consistent between Windows dev and CI).
+* text=auto eol=lf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.ttf binary
+*.otf binary
+*.wasm binary
