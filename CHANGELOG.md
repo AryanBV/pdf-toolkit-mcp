@@ -22,6 +22,8 @@ high-fidelity creation, and real quality infrastructure.
 - **New tool `pdf_compare`** — page-by-page text diff between two PDFs.
 - **New tool `pdf_delete_pages`** — remove a page range, preserving form fields
   on the remaining pages.
+- **New tool `pdf_flatten`** — bake form-field values into static content,
+  removing interactivity.
 
 ### Fixed
 
@@ -50,6 +52,13 @@ high-fidelity creation, and real quality infrastructure.
 - `pdf_encrypt` now uses **AES-256** (qpdf-wasm) instead of RC4 128-bit.
 - `pdf_embed_qr_code` rejects placements that fall off the page instead of
   silently clipping the barcode.
+- `pdf_create_from_markdown` and `pdf_create_from_template` rebuilt on
+  **@react-pdf/renderer + remark** (high-fidelity GFM tables, code blocks,
+  nested lists, bold/italic/links) — replaces the lossy
+  marked→html-to-pdfmake→pdfmake pipeline and the Roboto-only font limitation.
+  Template `data` is now Zod-validated (no silent coercion).
+- `pdf_embed_image` validates images and guards against oversized/corrupt
+  rasters (`MAX_IMAGE_DIMENSION`).
 
 ### Security
 
@@ -58,3 +67,6 @@ high-fidelity creation, and real quality infrastructure.
   jsdom (none of which the stdio server loads at runtime).
 - Removed the `@pdfsmaller/pdf-encrypt-lite` (RC4) dependency in favor of
   AES-256 encryption.
+- Removed `pdfmake`, `html-to-pdfmake`, `jsdom`, and `marked` (replaced by
+  @react-pdf/renderer + remark) — eliminates the jsdom memory-leak risk and the
+  Roboto-only font constraint.

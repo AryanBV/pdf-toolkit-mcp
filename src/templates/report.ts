@@ -1,107 +1,149 @@
-interface ReportSection {
-  heading: string;
-  body: string;
-}
+import React from "react";
+import { z } from "zod";
+import {
+  getReactPdf,
+  PRODUCER,
+  type DocumentElement,
+} from "../services/pdf-creator.js";
 
-export function buildReport(
-  data: Record<string, unknown>,
-): Record<string, unknown> {
-  const title = String(data.title ?? "Report");
-  const author = String(data.author ?? "");
-  const date = String(data.date ?? new Date().toISOString().slice(0, 10));
-  const subtitle = String(data.subtitle ?? "");
+const h = React.createElement;
 
-  const rawSections = Array.isArray(data.sections) ? data.sections : [];
-  const sections: ReportSection[] = rawSections.map((s: unknown) => {
-    const obj = s as Record<string, unknown>;
-    return {
-      heading: String(obj.heading ?? "Section"),
-      body: String(obj.body ?? ""),
-    };
-  });
+export const reportSchema = z
+  .object({
+    title: z.string().optional(),
+    author: z.string().optional(),
+    date: z.string().optional(),
+    subtitle: z.string().optional(),
+    sections: z
+      .array(
+        z.object({
+          heading: z.string().optional(),
+          body: z.string().optional(),
+        }),
+      )
+      .optional(),
+  })
+  .strip();
 
-  const content: unknown[] = [
-    // Title page
-    { text: "", margin: [0, 0, 0, 100] },
-    {
-      text: title,
+export type ReportData = z.infer<typeof reportSchema>;
+
+export async function buildReport(data: ReportData): Promise<DocumentElement> {
+  const rp = await getReactPdf();
+  const { Document, Page, View, Text, StyleSheet } = rp;
+
+  const title = data.title ?? "Report";
+  const author = data.author ?? "";
+  const date = data.date ?? new Date().toISOString().slice(0, 10);
+  const subtitle = data.subtitle ?? "";
+  const sections = (data.sections ?? []).map((s) => ({
+    heading: s.heading ?? "Section",
+    body: s.body ?? "",
+  }));
+
+  const styles = StyleSheet.create({
+    page: {
+      paddingTop: 56,
+      paddingBottom: 64,
+      paddingHorizontal: 56,
+      fontSize: 11,
+      lineHeight: 1.5,
+      fontFamily: "Helvetica",
+      color: "#1a1a1a",
+    },
+    titlePage: {
+      paddingTop: 56,
+      paddingBottom: 64,
+      paddingHorizontal: 56,
+      fontFamily: "Helvetica",
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    title: {
       fontSize: 32,
-      bold: true,
-      alignment: "center",
+      fontFamily: "Helvetica-Bold",
       color: "#2c3e50",
+      textAlign: "center",
     },
-    ...(subtitle
-      ? [
-          {
-            text: subtitle,
-            fontSize: 16,
-            alignment: "center",
-            color: "#666666",
-            margin: [0, 10, 0, 0],
-          },
-        ]
-      : []),
-    { text: "", margin: [0, 0, 0, 40] },
-    ...(author
-      ? [
-          {
-            text: `Author: ${author}`,
-            fontSize: 12,
-            alignment: "center",
-            color: "#888888",
-          },
-        ]
-      : []),
-    {
-      text: `Date: ${date}`,
-      fontSize: 12,
-      alignment: "center",
+    subtitle: {
+      fontSize: 16,
+      color: "#666666",
+      textAlign: "center",
+      marginTop: 10,
+    },
+    meta: { fontSize: 12, color: "#888888", textAlign: "center", marginTop: 6 },
+    metaBlock: { marginTop: 40, alignItems: "center" },
+    sectionHeading: {
+      fontSize: 18,
+      fontFamily: "Helvetica-Bold",
+      color: "#2c3e50",
+      marginBottom: 10,
+    },
+    sectionBody: { fontSize: 11, lineHeight: 1.5, marginBottom: 16 },
+    header: {
+      position: "absolute",
+      top: 24,
+      left: 56,
+      right: 56,
+      fontSize: 8,
       color: "#888888",
-      margin: [0, 4, 0, 0],
+      textAlign: "center",
     },
-    { text: "", pageBreak: "after" },
-    // Sections
-    ...sections.flatMap((section, idx) => [
-      {
-        text: `${idx + 1}. ${section.heading}`,
-        fontSize: 18,
-        bold: true,
-        color: "#2c3e50",
-        margin: [0, idx > 0 ? 20 : 0, 0, 10],
-      },
-      {
-        text: section.body,
-        fontSize: 11,
-        lineHeight: 1.5,
-        margin: [0, 0, 0, 10],
-      },
-    ]),
-  ];
-
-  return {
-    content,
-    defaultStyle: { fontSize: 11 },
-    header: (currentPage: number) => {
-      if (currentPage === 1) return null;
-      return {
-        text: title,
-        alignment: "center",
-        fontSize: 8,
-        color: "#888888",
-        margin: [40, 10, 40, 0],
-      };
-    },
-    footer: (currentPage: number, pageCount: number) => ({
-      text: `Page ${currentPage} of ${pageCount}`,
-      alignment: "center",
+    footer: {
+      position: "absolute",
+      bottom: 28,
+      left: 56,
+      right: 56,
       fontSize: 9,
       color: "#888888",
-      margin: [0, 10, 0, 0],
-    }),
-    info: {
+      textAlign: "center",
+    },
+  });
+
+  const sectionNodes = sections.map((section, idx) =>
+    h(
+      View,
+      { key: `sec-${idx}`, style: idx > 0 ? { marginTop: 8 } : {}, wrap: true },
+      h(
+        Text,
+        { style: styles.sectionHeading },
+        `${idx + 1}. ${section.heading}`,
+      ),
+      h(Text, { style: styles.sectionBody }, section.body),
+    ),
+  );
+
+  const footerRender = (props: {
+    pageNumber: number;
+    totalPages: number;
+  }): React.ReactNode => `Page ${props.pageNumber} of ${props.totalPages}`;
+
+  return h(
+    Document,
+    {
+      producer: PRODUCER,
       title,
       author: author || undefined,
-      producer: "@aryanbv/pdf-toolkit-mcp",
     },
-  };
+    // Title page
+    h(
+      Page,
+      { size: "A4", style: styles.titlePage },
+      h(Text, { style: styles.title }, title),
+      subtitle ? h(Text, { style: styles.subtitle }, subtitle) : null,
+      h(
+        View,
+        { style: styles.metaBlock },
+        author ? h(Text, { style: styles.meta }, `Author: ${author}`) : null,
+        h(Text, { style: styles.meta }, `Date: ${date}`),
+      ),
+    ),
+    // Body pages with running header + page-number footer
+    h(
+      Page,
+      { size: "A4", style: styles.page, wrap: true },
+      h(Text, { style: styles.header, fixed: true }, title),
+      h(Text, { style: styles.footer, fixed: true, render: footerRender }),
+      ...sectionNodes,
+    ),
+  ) as DocumentElement;
 }

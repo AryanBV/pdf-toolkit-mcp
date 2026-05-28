@@ -1,221 +1,269 @@
-interface InvoiceItem {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-}
+import React from "react";
+import { z } from "zod";
+import {
+  getReactPdf,
+  PRODUCER,
+  type DocumentElement,
+} from "../services/pdf-creator.js";
 
-export function buildInvoice(
-  data: Record<string, unknown>,
-): Record<string, unknown> {
-  const companyName = String(data.companyName ?? "Company Name");
-  const companyAddress = String(data.companyAddress ?? "");
-  const clientName = String(data.clientName ?? "Client Name");
-  const clientAddress = String(data.clientAddress ?? "");
-  const invoiceNumber = String(data.invoiceNumber ?? "INV-001");
-  const invoiceDate = String(
-    data.invoiceDate ?? new Date().toISOString().slice(0, 10),
-  );
-  const dueDate = String(data.dueDate ?? "");
-  const notes = String(data.notes ?? "");
-  const taxRate = Number(data.taxRate ?? 0);
-  const paymentTerms = String(data.paymentTerms ?? "");
+const h = React.createElement;
 
-  const rawItems = Array.isArray(data.items) ? data.items : [];
-  const items: InvoiceItem[] = rawItems.map((item: unknown) => {
-    const obj = item as Record<string, unknown>;
-    return {
-      description: String(obj.description ?? ""),
-      quantity: Number(obj.quantity ?? 1),
-      unitPrice: Number(obj.unitPrice ?? 0),
-    };
-  });
+// Accepts the create-invoice prompt shape:
+//   { companyName, clientName, invoiceNumber, invoiceDate, items:[{description,quantity,unitPrice}] }
+// plus optional address / tax / terms fields. Numbers are coerced so callers
+// may send them as strings.
+export const invoiceSchema = z
+  .object({
+    companyName: z.string().optional(),
+    companyAddress: z.string().optional(),
+    clientName: z.string().optional(),
+    clientAddress: z.string().optional(),
+    invoiceNumber: z.string().optional(),
+    invoiceDate: z.string().optional(),
+    dueDate: z.string().optional(),
+    notes: z.string().optional(),
+    paymentTerms: z.string().optional(),
+    taxRate: z.coerce.number().min(0).max(100).optional(),
+    items: z
+      .array(
+        z.object({
+          description: z.string().optional(),
+          quantity: z.coerce.number().optional(),
+          unitPrice: z.coerce.number().optional(),
+        }),
+      )
+      .optional(),
+  })
+  .strip();
 
-  const subtotal = items.reduce(
-    (sum, item) => sum + item.quantity * item.unitPrice,
-    0,
-  );
+export type InvoiceData = z.infer<typeof invoiceSchema>;
+
+export async function buildInvoice(
+  data: InvoiceData,
+): Promise<DocumentElement> {
+  const rp = await getReactPdf();
+  const { Document, Page, View, Text, StyleSheet } = rp;
+
+  const companyName = data.companyName ?? "Company Name";
+  const companyAddress = data.companyAddress ?? "";
+  const clientName = data.clientName ?? "Client Name";
+  const clientAddress = data.clientAddress ?? "";
+  const invoiceNumber = data.invoiceNumber ?? "INV-001";
+  const invoiceDate = data.invoiceDate ?? new Date().toISOString().slice(0, 10);
+  const dueDate = data.dueDate ?? "";
+  const notes = data.notes ?? "";
+  const paymentTerms = data.paymentTerms ?? "";
+  const taxRate = data.taxRate ?? 0;
+
+  const items = (data.items ?? []).map((item) => ({
+    description: item.description ?? "",
+    quantity: item.quantity ?? 1,
+    unitPrice: item.unitPrice ?? 0,
+  }));
+
+  const subtotal = items.reduce((s, it) => s + it.quantity * it.unitPrice, 0);
   const tax = subtotal * (taxRate / 100);
   const total = subtotal + tax;
+  const money = (n: number): string => `$${n.toFixed(2)}`;
 
-  const tableBody: unknown[][] = [
-    [
-      { text: "Description", bold: true, fillColor: "#f0f0f0" },
-      { text: "Qty", bold: true, alignment: "center", fillColor: "#f0f0f0" },
-      {
-        text: "Unit Price",
-        bold: true,
-        alignment: "right",
-        fillColor: "#f0f0f0",
-      },
-      { text: "Total", bold: true, alignment: "right", fillColor: "#f0f0f0" },
-    ],
-    ...items.map((item) => [
-      item.description,
-      { text: String(item.quantity), alignment: "center" },
-      { text: `$${item.unitPrice.toFixed(2)}`, alignment: "right" },
-      {
-        text: `$${(item.quantity * item.unitPrice).toFixed(2)}`,
-        alignment: "right",
-      },
-    ]),
-  ];
+  const styles = StyleSheet.create({
+    page: {
+      paddingTop: 48,
+      paddingBottom: 56,
+      paddingHorizontal: 48,
+      fontSize: 11,
+      fontFamily: "Helvetica",
+      color: "#1a1a1a",
+    },
+    company: { fontSize: 22, fontFamily: "Helvetica-Bold", color: "#333333" },
+    companyAddress: { fontSize: 9, color: "#666666", marginTop: 2 },
+    headerRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "flex-start",
+      marginTop: 24,
+    },
+    invoiceTitle: {
+      fontSize: 28,
+      fontFamily: "Helvetica-Bold",
+      color: "#2c3e50",
+    },
+    invoiceNumber: { fontSize: 12, color: "#666666", marginTop: 4 },
+    dateLine: { fontSize: 10, textAlign: "right" },
+    billTo: { marginTop: 24 },
+    billToLabel: {
+      fontSize: 10,
+      fontFamily: "Helvetica-Bold",
+      color: "#666666",
+    },
+    clientName: { fontSize: 12, fontFamily: "Helvetica-Bold", marginTop: 4 },
+    clientAddress: { fontSize: 10, color: "#666666", marginTop: 2 },
+    table: { marginTop: 24 },
+    tableHeader: {
+      flexDirection: "row",
+      backgroundColor: "#f0f0f0",
+      borderBottomWidth: 1,
+      borderBottomColor: "#cccccc",
+      borderBottomStyle: "solid",
+    },
+    tableRow: {
+      flexDirection: "row",
+      borderBottomWidth: 0.5,
+      borderBottomColor: "#e0e0e0",
+      borderBottomStyle: "solid",
+    },
+    th: { padding: 6, fontSize: 10, fontFamily: "Helvetica-Bold" },
+    td: { padding: 6, fontSize: 10 },
+    colDesc: { flex: 1 },
+    colQty: { width: 50, textAlign: "center" },
+    colPrice: { width: 80, textAlign: "right" },
+    colTotal: { width: 80, textAlign: "right" },
+    totals: { marginTop: 16, alignItems: "flex-end" },
+    totalRow: { flexDirection: "row", marginTop: 4 },
+    totalLabel: { width: 90, textAlign: "right", fontFamily: "Helvetica-Bold" },
+    totalValue: { width: 90, textAlign: "right" },
+    rule: {
+      width: 180,
+      borderBottomWidth: 1,
+      borderBottomColor: "#333333",
+      borderBottomStyle: "solid",
+      marginVertical: 8,
+    },
+    grandLabel: {
+      width: 90,
+      textAlign: "right",
+      fontFamily: "Helvetica-Bold",
+      fontSize: 14,
+    },
+    grandValue: {
+      width: 90,
+      textAlign: "right",
+      fontFamily: "Helvetica-Bold",
+      fontSize: 14,
+    },
+    sectionTitle: {
+      fontSize: 10,
+      fontFamily: "Helvetica-Bold",
+      marginTop: 20,
+      marginBottom: 4,
+    },
+    sectionBody: { fontSize: 10, color: "#666666" },
+  });
 
-  const content: unknown[] = [
-    { text: companyName, fontSize: 22, bold: true, color: "#333333" },
-    ...(companyAddress
-      ? [
-          {
-            text: companyAddress,
-            fontSize: 9,
-            color: "#666666",
-            margin: [0, 2, 0, 20],
-          },
-        ]
-      : [{ text: "", margin: [0, 0, 0, 20] }]),
-    {
-      columns: [
-        {
-          width: "*",
-          stack: [
-            { text: "INVOICE", fontSize: 28, bold: true, color: "#2c3e50" },
-            {
-              text: `#${invoiceNumber}`,
-              fontSize: 12,
-              color: "#666666",
-              margin: [0, 4, 0, 0],
-            },
-          ],
-        },
-        {
-          width: "auto",
-          stack: [
-            { text: `Date: ${invoiceDate}`, fontSize: 10, alignment: "right" },
-            ...(dueDate
-              ? [
-                  {
-                    text: `Due: ${dueDate}`,
-                    fontSize: 10,
-                    alignment: "right",
-                    margin: [0, 4, 0, 0],
-                  },
-                ]
-              : []),
-          ],
-        },
-      ],
-      margin: [0, 0, 0, 20],
-    },
-    {
-      stack: [
-        { text: "Bill To:", fontSize: 10, bold: true, color: "#666666" },
-        { text: clientName, fontSize: 12, bold: true, margin: [0, 4, 0, 0] },
-        ...(clientAddress
-          ? [{ text: clientAddress, fontSize: 10, color: "#666666" }]
-          : []),
-      ],
-      margin: [0, 0, 0, 20],
-    },
-    {
-      table: {
-        headerRows: 1,
-        widths: ["*", 50, 80, 80],
-        body: tableBody,
-      },
-      layout: "lightHorizontalLines",
-      margin: [0, 0, 0, 10],
-    },
-    {
-      columns: [
-        { width: "*", text: "" },
-        {
-          width: "auto",
-          stack: [
-            {
-              columns: [
-                {
-                  text: "Subtotal:",
-                  width: 80,
-                  alignment: "right",
-                  bold: true,
-                },
-                {
-                  text: `$${subtotal.toFixed(2)}`,
-                  width: 80,
-                  alignment: "right",
-                },
-              ],
-            },
-            ...(taxRate > 0
-              ? [
-                  {
-                    columns: [
-                      {
-                        text: `Tax (${taxRate}%):`,
-                        width: 80,
-                        alignment: "right",
-                        bold: true,
-                      },
-                      {
-                        text: `$${tax.toFixed(2)}`,
-                        width: 80,
-                        alignment: "right",
-                      },
-                    ],
-                    margin: [0, 4, 0, 0],
-                  },
-                ]
-              : []),
-            {
-              canvas: [
-                { type: "line", x1: 0, y1: 0, x2: 160, y2: 0, lineWidth: 1 },
-              ],
-              margin: [0, 8, 0, 8],
-            },
-            {
-              columns: [
-                {
-                  text: "Total:",
-                  width: 80,
-                  alignment: "right",
-                  bold: true,
-                  fontSize: 14,
-                },
-                {
-                  text: `$${total.toFixed(2)}`,
-                  width: 80,
-                  alignment: "right",
-                  bold: true,
-                  fontSize: 14,
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      margin: [0, 10, 0, 20],
-    },
-    ...(paymentTerms
-      ? [
-          {
-            text: "Payment Terms",
-            bold: true,
-            fontSize: 10,
-            margin: [0, 10, 0, 4],
-          },
-          { text: paymentTerms, fontSize: 10, color: "#666666" },
-        ]
-      : []),
-    ...(notes
-      ? [
-          { text: "Notes", bold: true, fontSize: 10, margin: [0, 10, 0, 4] },
-          { text: notes, fontSize: 10, color: "#666666" },
-        ]
-      : []),
-  ];
+  const itemRows = items.map((item, i) =>
+    h(
+      View,
+      { key: `item-${i}`, style: styles.tableRow, wrap: false },
+      h(Text, { style: [styles.td, styles.colDesc] }, item.description),
+      h(Text, { style: [styles.td, styles.colQty] }, String(item.quantity)),
+      h(Text, { style: [styles.td, styles.colPrice] }, money(item.unitPrice)),
+      h(
+        Text,
+        { style: [styles.td, styles.colTotal] },
+        money(item.quantity * item.unitPrice),
+      ),
+    ),
+  );
 
-  return {
-    content,
-    defaultStyle: { fontSize: 11 },
-    info: { producer: "@aryanbv/pdf-toolkit-mcp" },
-  };
+  return h(
+    Document,
+    {
+      producer: PRODUCER,
+      title: `Invoice ${invoiceNumber}`,
+      author: companyName,
+    },
+    h(
+      Page,
+      { size: "A4", style: styles.page, wrap: true },
+      h(Text, { style: styles.company }, companyName),
+      companyAddress
+        ? h(Text, { style: styles.companyAddress }, companyAddress)
+        : null,
+      h(
+        View,
+        { style: styles.headerRow },
+        h(
+          View,
+          {},
+          h(Text, { style: styles.invoiceTitle }, "INVOICE"),
+          h(Text, { style: styles.invoiceNumber }, `#${invoiceNumber}`),
+        ),
+        h(
+          View,
+          {},
+          h(Text, { style: styles.dateLine }, `Date: ${invoiceDate}`),
+          dueDate
+            ? h(
+                Text,
+                { style: [styles.dateLine, { marginTop: 4 }] },
+                `Due: ${dueDate}`,
+              )
+            : null,
+        ),
+      ),
+      h(
+        View,
+        { style: styles.billTo },
+        h(Text, { style: styles.billToLabel }, "Bill To:"),
+        h(Text, { style: styles.clientName }, clientName),
+        clientAddress
+          ? h(Text, { style: styles.clientAddress }, clientAddress)
+          : null,
+      ),
+      h(
+        View,
+        { style: styles.table },
+        h(
+          View,
+          { style: styles.tableHeader },
+          h(Text, { style: [styles.th, styles.colDesc] }, "Description"),
+          h(Text, { style: [styles.th, styles.colQty] }, "Qty"),
+          h(Text, { style: [styles.th, styles.colPrice] }, "Unit Price"),
+          h(Text, { style: [styles.th, styles.colTotal] }, "Total"),
+        ),
+        ...itemRows,
+      ),
+      h(
+        View,
+        { style: styles.totals },
+        h(
+          View,
+          { style: styles.totalRow },
+          h(Text, { style: styles.totalLabel }, "Subtotal:"),
+          h(Text, { style: styles.totalValue }, money(subtotal)),
+        ),
+        taxRate > 0
+          ? h(
+              View,
+              { style: styles.totalRow },
+              h(Text, { style: styles.totalLabel }, `Tax (${taxRate}%):`),
+              h(Text, { style: styles.totalValue }, money(tax)),
+            )
+          : null,
+        h(View, { style: styles.rule }),
+        h(
+          View,
+          { style: styles.totalRow },
+          h(Text, { style: styles.grandLabel }, "Total:"),
+          h(Text, { style: styles.grandValue }, money(total)),
+        ),
+      ),
+      paymentTerms
+        ? h(
+            View,
+            {},
+            h(Text, { style: styles.sectionTitle }, "Payment Terms"),
+            h(Text, { style: styles.sectionBody }, paymentTerms),
+          )
+        : null,
+      notes
+        ? h(
+            View,
+            {},
+            h(Text, { style: styles.sectionTitle }, "Notes"),
+            h(Text, { style: styles.sectionBody }, notes),
+          )
+        : null,
+    ),
+  ) as DocumentElement;
 }

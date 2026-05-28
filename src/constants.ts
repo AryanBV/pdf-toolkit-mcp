@@ -16,3 +16,6 @@ export const MAX_RENDER_DIMENSION = 5_000;
 // Text-extraction / search / markdown limits
 export const MAX_SEARCH_RESULTS = 500;
 export const MAX_MARKDOWN_INPUT_CHARS = 5_000_000;
+
+// Image-embedding guard — reject absurdly large rasters before embedding.
+export const MAX_IMAGE_DIMENSION = 20_000;

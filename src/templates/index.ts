@@ -1,14 +1,21 @@
+import type { z } from "zod";
 import type { TemplateName } from "../types.js";
-import { buildInvoice } from "./invoice.js";
-import { buildReport } from "./report.js";
-import { buildLetter } from "./letter.js";
+import type { DocumentElement } from "../services/pdf-creator.js";
+import { invoiceSchema, buildInvoice } from "./invoice.js";
+import { reportSchema, buildReport } from "./report.js";
+import { letterSchema, buildLetter } from "./letter.js";
 
-type TemplateBuilder = (
-  data: Record<string, unknown>,
-) => Record<string, unknown>;
+export interface TemplateEntry<S extends z.ZodTypeAny> {
+  schema: S;
+  build: (data: z.infer<S>) => Promise<DocumentElement>;
+}
 
-export const templateRegistry: Record<TemplateName, TemplateBuilder> = {
-  invoice: buildInvoice,
-  report: buildReport,
-  letter: buildLetter,
-};
+// A single registry mapping each template name to its Zod schema + builder.
+// The tool validates incoming `data` with `schema` before calling `build`.
+export const templateRegistry = {
+  invoice: { schema: invoiceSchema, build: buildInvoice },
+  report: { schema: reportSchema, build: buildReport },
+  letter: { schema: letterSchema, build: buildLetter },
+} satisfies Record<TemplateName, TemplateEntry<z.ZodTypeAny>>;
+
+export type { TemplateName };

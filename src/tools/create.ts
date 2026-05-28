@@ -18,15 +18,18 @@ import {
   parsePageRange,
   toUint8Array,
 } from "../utils/validation.js";
-import { toolError, toolSuccess } from "../utils/errors.js";
-import { getFileSize } from "../utils/file-utils.js";
 import {
-  createFromMarkdown,
-  renderDocDefinition,
-} from "../services/pdf-creator.js";
-import type { PdfDocDefinition } from "../services/pdf-creator.js";
+  PdfError,
+  toolError,
+  toolSuccess,
+  toErrorResult,
+} from "../utils/errors.js";
+import { getFileSize } from "../utils/file-utils.js";
+import { createFromMarkdown, renderTemplate } from "../services/pdf-creator.js";
 import { templateRegistry } from "../templates/index.js";
 import type { TemplateName } from "../types.js";
+import { writeFile } from "node:fs/promises";
+import { MAX_IMAGE_DIMENSION } from "../constants.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -569,6 +572,13 @@ export function registerCreateTools(server: McpServer): void {
         const imageBuffer = await readFile(resolvedImagePath);
         const imageBytes = toUint8Array(imageBuffer);
 
+        if (imageBytes.length === 0) {
+          throw new PdfError(
+            `Image file is empty: ${resolvedImagePath}.`,
+            "UNSUPPORTED_FORMAT",
+          );
+        }
+
         const pdfDoc = await loadExistingPdf(resolvedPath);
         const totalPages = pdfDoc.getPageCount();
 
@@ -578,10 +588,30 @@ export function registerCreateTools(server: McpServer): void {
           );
         }
 
-        const image =
-          ext === ".png"
-            ? await pdfDoc.embedPng(imageBytes)
-            : await pdfDoc.embedJpg(imageBytes);
+        // pdf-lib decodes the image bytes here; a corrupt or mislabeled file
+        // throws. Surface a clean UNSUPPORTED_FORMAT error rather than a stack.
+        let image;
+        try {
+          image =
+            ext === ".png"
+              ? await pdfDoc.embedPng(imageBytes)
+              : await pdfDoc.embedJpg(imageBytes);
+        } catch {
+          throw new PdfError(
+            `Failed to decode image: ${resolvedImagePath}. The file may be corrupt or not a valid ${ext === ".png" ? "PNG" : "JPEG"} image.`,
+            "UNSUPPORTED_FORMAT",
+          );
+        }
+
+        if (
+          image.width > MAX_IMAGE_DIMENSION ||
+          image.height > MAX_IMAGE_DIMENSION
+        ) {
+          throw new PdfError(
+            `Image dimensions ${image.width}x${image.height}px exceed the limit of ${MAX_IMAGE_DIMENSION}px per side.`,
+            "RESOURCE_LIMIT",
+          );
+        }
 
         // Calculate dimensions preserving aspect ratio
         let drawWidth: number;
@@ -620,9 +650,7 @@ export function registerCreateTools(server: McpServer): void {
           fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -632,7 +660,7 @@ export function registerCreateTools(server: McpServer): void {
     "pdf_create_from_markdown",
     {
       description:
-        "Create a rich PDF from Markdown content. Supports headings, bold, italic, tables, lists, and code blocks. Uses Roboto font.",
+        "Create a rich, high-fidelity PDF from Markdown (CommonMark + GFM). Supports headings, bold/italic, links, ordered/bullet lists, tables, fenced code blocks, blockquotes, and horizontal rules.",
       inputSchema: z
         .object({
           markdown: z
@@ -658,22 +686,6 @@ export function registerCreateTools(server: McpServer): void {
             .max(1000)
             .optional()
             .describe("PDF document author metadata"),
-          pageNumbers: z
-            .boolean()
-            .optional()
-            .describe("Add page numbers to footer. Defaults to false."),
-          headerText: z
-            .string()
-            .max(500)
-            .optional()
-            .describe("Text to display in the page header"),
-          footerText: z
-            .string()
-            .max(500)
-            .optional()
-            .describe(
-              "Text to display in the page footer (above page numbers if both enabled)",
-            ),
         })
         .strict(),
       annotations: {
@@ -683,40 +695,28 @@ export function registerCreateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({
-      markdown,
-      outputPath,
-      pageSize,
-      title,
-      author,
-      pageNumbers,
-      headerText,
-      footerText,
-    }) => {
+    async ({ markdown, outputPath, pageSize, title, author }) => {
       try {
         const resolvedOutput = await validateOutputPath(outputPath);
 
-        const result = await createFromMarkdown({
-          markdown,
-          outputPath: resolvedOutput,
-          pageSize: pageSize as "A4" | "LETTER" | "LEGAL" | undefined,
+        const bytes = await createFromMarkdown(markdown, {
+          pageSize: pageSize ?? "A4",
           title,
           author,
-          pageNumbers,
-          headerText,
-          footerText,
         });
 
+        await writeFile(resolvedOutput, bytes);
+        const fileSize = await getFileSize(resolvedOutput);
+        const pdfDoc = await pdfLib.PDFDocument.load(bytes);
+
         return toolSuccess({
-          outputPath: result.outputPath,
-          pageCount: result.pageCount,
+          outputPath: resolvedOutput,
+          pageCount: pdfDoc.getPageCount(),
           pageSize: pageSize ?? "A4",
-          fileSize: result.fileSize,
+          fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
       }
     },
   );
@@ -726,7 +726,7 @@ export function registerCreateTools(server: McpServer): void {
     "pdf_create_from_template",
     {
       description:
-        "Create a PDF from a named template (invoice, report, or letter). Pass structured data matching the template's expected fields.",
+        "Create a polished PDF from a named template (invoice, report, or letter). Pass structured data matching the template's fields; data is validated against the template's schema.",
       inputSchema: z
         .object({
           templateName: z
@@ -735,16 +735,12 @@ export function registerCreateTools(server: McpServer): void {
           data: z
             .record(z.unknown())
             .describe(
-              "Template data. Invoice: companyName, clientName, invoiceNumber, items[{description, quantity, unitPrice}], taxRate, dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName.",
+              "Template data. Invoice: companyName, clientName, invoiceNumber, invoiceDate, items[{description, quantity, unitPrice}], taxRate, dueDate, notes, paymentTerms. Report: title, author, date, subtitle, sections[{heading, body}]. Letter: senderName, senderAddress, recipientName, recipientAddress, subject, body, closing, signatureName.",
             ),
           outputPath: z
             .string()
             .max(4096)
             .describe("Absolute path for the output PDF file"),
-          pageSize: z
-            .enum(["A4", "LETTER", "LEGAL"])
-            .optional()
-            .describe("Page size. Defaults to A4."),
         })
         .strict(),
       annotations: {
@@ -754,7 +750,7 @@ export function registerCreateTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ templateName, data, outputPath, pageSize }) => {
+    async ({ templateName, data, outputPath }) => {
       try {
         const BLOCKED_KEYS = ["__proto__", "constructor", "prototype"];
         if (Object.keys(data).some((k) => BLOCKED_KEYS.includes(k))) {
@@ -763,33 +759,109 @@ export function registerCreateTools(server: McpServer): void {
 
         const resolvedOutput = await validateOutputPath(outputPath);
 
-        const builder = templateRegistry[templateName as TemplateName];
-        if (!builder) {
+        const entry = templateRegistry[templateName as TemplateName];
+        if (!entry) {
           return toolError(
             `Unknown template: ${templateName}. Available templates: invoice, report, letter.`,
           );
         }
 
-        const docDefinition = builder(
-          data as Record<string, unknown>,
-        ) as unknown as PdfDocDefinition;
-        if (pageSize) {
-          docDefinition.pageSize = pageSize;
+        const parsed = entry.schema.safeParse(data);
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          const path = issue?.path.length ? `${issue.path.join(".")}: ` : "";
+          throw new PdfError(
+            `Invalid data for '${templateName}' template — ${path}${issue?.message ?? "validation failed"}.`,
+            "INVALID_INPUT",
+          );
         }
 
-        const result = await renderDocDefinition(docDefinition, resolvedOutput);
+        // `parsed.data` is the validated output of `entry.schema`, which exactly
+        // matches `entry.build`'s parameter; the registry union erases that link,
+        // so cast the builder to accept the parsed shape.
+        const build = entry.build as (
+          d: typeof parsed.data,
+        ) => Promise<Parameters<typeof renderTemplate>[0]>;
+        const element = await build(parsed.data);
+
+        const bytes = await renderTemplate(element);
+        await writeFile(resolvedOutput, bytes);
+        const fileSize = await getFileSize(resolvedOutput);
+        const pdfDoc = await pdfLib.PDFDocument.load(bytes);
 
         return toolSuccess({
-          outputPath: result.outputPath,
-          template: templateName,
-          pageCount: result.pageCount,
-          pageSize: pageSize ?? "A4",
-          fileSize: result.fileSize,
+          outputPath: resolvedOutput,
+          templateName,
+          pageCount: pdfDoc.getPageCount(),
+          fileSize,
         });
       } catch (error) {
-        return toolError(
-          error instanceof Error ? error.message : String(error),
-        );
+        return toErrorResult(error);
+      }
+    },
+  );
+
+  // ── pdf_flatten ───────────────────────────────────────────────────────
+  server.registerTool(
+    "pdf_flatten",
+    {
+      description:
+        "Flatten a PDF's form fields, baking their current values into the page content and removing interactivity. Form-less PDFs are copied unchanged.",
+      inputSchema: z
+        .object({
+          filePath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path to the source PDF file"),
+          outputPath: z
+            .string()
+            .max(4096)
+            .describe("Absolute path for the flattened output PDF"),
+        })
+        .strict(),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ filePath, outputPath }) => {
+      try {
+        const resolvedPath = await validatePdfPath(filePath);
+        await validateFileSize(resolvedPath);
+        const resolvedOutput = await validateOutputPath(outputPath, filePath);
+
+        const pdfDoc = await loadExistingPdf(resolvedPath);
+
+        let fieldCount = 0;
+        let note =
+          "Flattened form fields; the document is now non-interactive.";
+        try {
+          const form = pdfDoc.getForm();
+          fieldCount = form.getFields().length;
+          if (fieldCount > 0) {
+            form.flatten();
+          } else {
+            note =
+              "PDF has no form fields; output is a copy of the input (nothing to flatten).";
+          }
+        } catch {
+          note =
+            "PDF has no form fields; output is a copy of the input (nothing to flatten).";
+        }
+
+        await savePdf(pdfDoc, resolvedOutput);
+        const fileSize = await getFileSize(resolvedOutput);
+
+        return toolSuccess({
+          outputPath: resolvedOutput,
+          flattenedFields: fieldCount,
+          note,
+          fileSize,
+        });
+      } catch (error) {
+        return toErrorResult(error);
       }
     },
   );
