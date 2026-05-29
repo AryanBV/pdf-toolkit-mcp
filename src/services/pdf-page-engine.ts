@@ -18,15 +18,28 @@ const {
 /**
  * Result of a form-preserving page copy.
  * - `preserved`: number of top-level AcroForm fields registered into `dest`.
- * - `renamed`: original names of fields renamed to avoid colliding with fields
- *   already present in `dest` (the new name is `<prefix>.<original>`).
+ * - `renamed`: fields renamed to avoid colliding with fields already present in
+ *   `dest`, as `{ from, to }` pairs so callers know the new name to address.
  * - `dropped`: names of fields that could not be preserved and fell back to
  *   plain copied (non-interactive) content.
  */
 export interface FormCopyReport {
   preserved: number;
-  renamed: string[];
+  renamed: { from: string; to: string }[];
   dropped: string[];
+}
+
+/**
+ * Choose the form report to surface to callers. When the output was flattened,
+ * interactivity is intentionally removed, so report an empty result rather than
+ * the now-irrelevant preserve/rename/drop accounting (which would otherwise read
+ * as the contradictory `{ preserved: 0, renamed: [...] }`).
+ */
+export function reportFormFields(
+  report: FormCopyReport,
+  flattened: boolean,
+): FormCopyReport {
+  return flattened ? { preserved: 0, renamed: [], dropped: [] } : report;
 }
 
 interface CopyOptions {
@@ -270,6 +283,13 @@ function mergeDefaultResources(
       for (const [subKey, subValue] of incomingDict.entries()) {
         if (existingDict.get(subKey) === undefined) {
           existingDict.set(subKey, intoDest(subValue));
+        } else {
+          // Both documents define this resource (e.g. /Font /Helv) differently;
+          // dest's is kept. Surface it — a merged field may otherwise render in
+          // the wrong font. (Full namespace-and-rebind is a tracked follow-up.)
+          logger.warn(
+            `AcroForm /DR resource collision on ${key.toString()}${subKey.toString()}; keeping the destination's resource.`,
+          );
         }
       }
     }
@@ -339,6 +359,10 @@ export async function copyPagesPreservingForms(
     }
 
     const usedNames = existingDestFieldNames(dest);
+    // Per-original-name probe cursor so k identically-named colliding fields
+    // cost O(k) renames total instead of O(k^2); the produced sequence is
+    // unchanged (<prefix>.<name>, <prefix>2.<name>, …).
+    const nextProbe = new Map<string, number>();
     const { topFields, liveWidgetToPage, sharedWidgetFields } =
       scanSurvivingWidgets(dest, pages);
 
@@ -368,19 +392,25 @@ export async function copyPagesPreservingForms(
         continue;
       }
 
-      // Namespace on collision so two sources don't share one field.
+      // Namespace on collision so two sources don't share one field. Resume the
+      // numbered probe per original name (nextProbe) — identical sequence at
+      // O(k) total cost.
       let finalName = originalName;
       if (usedNames.has(finalName)) {
         const prefix = opts.namespacePrefix ?? "dup";
-        let candidate = `${prefix}.${originalName}`;
-        let n = 2;
+        let n = nextProbe.get(originalName) ?? 1;
+        let candidate =
+          n === 1
+            ? `${prefix}.${originalName}`
+            : `${prefix}${n}.${originalName}`;
         while (usedNames.has(candidate)) {
-          candidate = `${prefix}${n}.${originalName}`;
           n++;
+          candidate = `${prefix}${n}.${originalName}`;
         }
+        nextProbe.set(originalName, n + 1);
         finalName = candidate;
         setFieldName(field, finalName);
-        report.renamed.push(originalName);
+        report.renamed.push({ from: originalName, to: finalName });
       }
       usedNames.add(finalName);
 

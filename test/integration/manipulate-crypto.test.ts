@@ -336,8 +336,8 @@ describe("pdf_encrypt (AES-256) / pdf_compare / pdf_embed_qr_code bounds", () =>
     expect(payload.drawnSize.height).toBeLessThan(100);
   }, 30_000);
 
-  // ── reorder error codes ───────────────────────────────────────────────
-  it("reorder reports INVALID_INPUT for an out-of-range page number", async () => {
+  // ── reorder error codes (shared single-page validator) ────────────────
+  it("reorder reports PAGE_OUT_OF_RANGE for an out-of-range page number", async () => {
     const src = join(workDir, "reorder-bad-src.pdf");
     const out = join(workDir, "reorder-bad-out.pdf");
     await writeFile(src, await makePdf(["p1", "p2"]));
@@ -349,6 +349,26 @@ describe("pdf_encrypt (AES-256) / pdf_compare / pdf_embed_qr_code bounds", () =>
 
     expect(result.isError).toBe(true);
     const text = textOf(result);
+    // Out-of-range page is PAGE_OUT_OF_RANGE here, consistent with every other
+    // page-selecting tool (was INVALID_INPUT before the shared validator).
+    expect(text).toContain("PAGE_OUT_OF_RANGE");
+    expect(text).toMatch(/exceeds document length/i);
+    expect(text).not.toMatch(/\bat .*\(.*:\d+:\d+\)/); // no stack frames
+  }, 30_000);
+
+  it("reorder reports INVALID_INPUT for a malformed page token", async () => {
+    const src = join(workDir, "reorder-bad2-src.pdf");
+    const out = join(workDir, "reorder-bad2-out.pdf");
+    await writeFile(src, await makePdf(["p1", "p2"]));
+
+    const result = (await client.callTool({
+      name: "pdf_reorder_pages",
+      arguments: { filePath: src, pageOrder: "1,3abc", outputPath: out },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    // "3abc" is rejected as malformed syntax (not silently parsed to 3).
     expect(text).toContain("INVALID_INPUT");
     expect(text).toMatch(/invalid page number/i);
     expect(text).not.toMatch(/\bat .*\(.*:\d+:\d+\)/); // no stack frames

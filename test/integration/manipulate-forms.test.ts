@@ -132,9 +132,9 @@ describe("form-preserving merge / split / delete_pages / reorder", () => {
     // First copy: 4 preserved, no rename. Second copy: 4 more preserved, all renamed.
     expect(payload.formFields.preserved).toBe(8);
     expect(payload.formFields.dropped).toEqual([]);
-    expect(payload.formFields.renamed.sort()).toEqual(
-      ["agree", "color", "name", "size"].sort(),
-    );
+    expect(
+      payload.formFields.renamed.map((r: { from: string }) => r.from).sort(),
+    ).toEqual(["agree", "color", "name", "size"].sort());
 
     // Re-load the OUTPUT and assert fields actually survived (not stripped).
     const names = await fieldNamesOf(out);
@@ -162,6 +162,51 @@ describe("form-preserving merge / split / delete_pages / reorder", () => {
 
     const names = await fieldNamesOf(out);
     expect(names).toEqual(["name"]); // 'email' lived on the omitted page 2
+  }, 30_000);
+
+  // ── split on a form-LESS PDF (the common case) reports zero form activity ─
+  it("splits a plain (form-less) PDF and reports zero form activity", async () => {
+    const src = join(workDir, "split-plain-src.pdf");
+    const out = join(workDir, "split-plain-out.pdf");
+    // Distinct per-page markers so we can prove the right pages were kept.
+    await writeFile(
+      src,
+      await makePlainPdf(["PAGEONE", "PAGETWO", "PAGETHREE", "PAGEFOUR"]),
+    );
+
+    const result = (await client.callTool({
+      name: "pdf_split",
+      arguments: { filePath: src, pages: "1,3", outputPath: out },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(out);
+    expect(payload.totalSourcePages).toBe(4);
+    expect(payload.flattened).toBe(false);
+    // A form-less source has no fields to preserve, rename, or drop.
+    expect(payload.formFields).toEqual({
+      preserved: 0,
+      renamed: [],
+      dropped: [],
+    });
+
+    // The output must hold exactly the two extracted pages.
+    const bytes = await readFile(out);
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    expect(doc.getPageCount()).toBe(2);
+
+    // And those pages must be page 1 and page 3 — not 2 or 4.
+    const extract = (await client.callTool({
+      name: "pdf_extract_text",
+      arguments: { filePath: out },
+    })) as ToolResultLike;
+    expect(extract.isError).toBeFalsy();
+    const text = textOf(extract);
+    expect(text).toContain("PAGEONE");
+    expect(text).toContain("PAGETHREE");
+    expect(text).not.toContain("PAGETWO");
+    expect(text).not.toContain("PAGEFOUR");
   }, 30_000);
 
   // ── delete_pages keeps remaining fields ───────────────────────────────

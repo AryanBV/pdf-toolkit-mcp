@@ -12,6 +12,7 @@ import {
 } from "../services/pdf-writer.js";
 import {
   copyPagesPreservingForms,
+  reportFormFields,
   type FormCopyReport,
 } from "../services/pdf-page-engine.js";
 import { encryptPdf } from "../services/pdf-crypto.js";
@@ -21,6 +22,7 @@ import {
   validateOutputPath,
   validateFileSize,
   parsePageRange,
+  parseSinglePage,
   toUint8Array,
 } from "../utils/validation.js";
 import { PdfError, toolSuccess, toErrorResult } from "../utils/errors.js";
@@ -28,6 +30,7 @@ import { getFileSize } from "../utils/file-utils.js";
 import {
   MAX_MERGE_FILES,
   MAX_PAGE_WARNING,
+  MAX_REORDER_OUTPUT_PAGES,
   CHARACTER_LIMIT,
 } from "../constants.js";
 
@@ -144,11 +147,7 @@ export function registerManipulateTools(server: McpServer): void {
           pageCount: totalPages,
           inputFiles: resolvedPaths.length,
           flattened: flatten === true,
-          formFields: {
-            preserved: flatten ? 0 : formReport.preserved,
-            renamed: formReport.renamed,
-            dropped: formReport.dropped,
-          },
+          formFields: reportFormFields(formReport, flatten === true),
           warnings,
           fileSize,
         });
@@ -225,11 +224,7 @@ export function registerManipulateTools(server: McpServer): void {
           extractedPages: pages,
           totalSourcePages,
           flattened: flatten === true,
-          formFields: {
-            preserved: flatten ? 0 : formReport.preserved,
-            renamed: formReport.renamed,
-            dropped: formReport.dropped,
-          },
+          formFields: reportFormFields(formReport, flatten === true),
           fileSize,
         });
       } catch (error) {
@@ -283,6 +278,12 @@ export function registerManipulateTools(server: McpServer): void {
 
         const pdfDoc = await loadExistingPdf(resolvedPath);
         const totalPages = pdfDoc.getPageCount();
+        if (totalPages === 0) {
+          throw new PdfError(
+            "The PDF has no pages; nothing to rotate.",
+            "INVALID_INPUT",
+          );
+        }
 
         let pageIndices: number[];
         if (pages) {
@@ -592,6 +593,12 @@ export function registerManipulateTools(server: McpServer): void {
         const pdfDoc = await loadExistingPdf(resolvedPath);
         const font = await pdfDoc.embedFont(pdfLib.StandardFonts.Helvetica);
         const totalPages = pdfDoc.getPageCount();
+        if (totalPages === 0) {
+          throw new PdfError(
+            "The PDF has no pages; nothing to number.",
+            "INVALID_INPUT",
+          );
+        }
 
         const pos = position ?? "bottom-center";
         const fmt = format ?? "Page X of Y";
@@ -808,28 +815,50 @@ export function registerManipulateTools(server: McpServer): void {
           barcodeSize,
         );
 
-        // Bounds check: the barcode is placed with its bottom-left corner at
-        // (x, y) (PDF origin is bottom-left). Reject placements that fall off
-        // the page so the barcode is never silently clipped or invisible. The
-        // check runs against the ACTUAL drawn box, not an assumed square.
+        // Bounds-check in VIEWER space (where the user's x/y are intuitive) and
+        // place the barcode so it reads upright regardless of the page's
+        // /Rotate flag — mirrors pdf_add_page_numbers: anchor in viewer space,
+        // map back to page space, counter-rotate. (x, y) is the barcode's
+        // bottom-left corner; the check runs against the ACTUAL drawn box.
         const { width: pageWidth, height: pageHeight } = targetPage.getSize();
-        if (
-          x < 0 ||
-          y < 0 ||
-          x + drawWidth > pageWidth ||
-          y + drawHeight > pageHeight
-        ) {
+        const rotation = ((targetPage.getRotation().angle % 360) + 360) % 360;
+        const sideways = rotation === 90 || rotation === 270;
+        const vw = sideways ? pageHeight : pageWidth;
+        const vh = sideways ? pageWidth : pageHeight;
+        if (x < 0 || y < 0 || x + drawWidth > vw || y + drawHeight > vh) {
           throw new PdfError(
-            `Barcode does not fit on page ${page}. Page size is ${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} points; the barcode draws as ${drawWidth.toFixed(0)}x${drawHeight.toFixed(0)} points with its bottom-left corner at (${x}, ${y}), extending to (${(x + drawWidth).toFixed(0)}, ${(y + drawHeight).toFixed(0)}). Reduce size or move x/y so 0 <= x, 0 <= y, x+width <= ${pageWidth.toFixed(0)}, y+height <= ${pageHeight.toFixed(0)}.`,
+            `Barcode does not fit on page ${page}. Page size is ${vw.toFixed(0)}x${vh.toFixed(0)} points; the barcode draws as ${drawWidth.toFixed(0)}x${drawHeight.toFixed(0)} points with its bottom-left corner at (${x}, ${y}), extending to (${(x + drawWidth).toFixed(0)}, ${(y + drawHeight).toFixed(0)}). Reduce size or move x/y so 0 <= x, 0 <= y, x+width <= ${vw.toFixed(0)}, y+height <= ${vh.toFixed(0)}.`,
             "INVALID_INPUT",
           );
         }
 
+        // Map the viewer-space anchor to page (unrotated) space.
+        let drawX: number;
+        let drawY: number;
+        switch (rotation) {
+          case 90:
+            drawX = pageWidth - y;
+            drawY = x;
+            break;
+          case 180:
+            drawX = pageWidth - x;
+            drawY = pageHeight - y;
+            break;
+          case 270:
+            drawX = y;
+            drawY = pageHeight - x;
+            break;
+          default: // 0
+            drawX = x;
+            drawY = y;
+        }
+
         targetPage.drawImage(image, {
-          x,
-          y,
+          x: drawX,
+          y: drawY,
           width: drawWidth,
           height: drawHeight,
+          rotate: pdfLib.degrees(rotation),
         });
 
         await savePdf(pdfDoc, resolvedOutput);
@@ -869,7 +898,7 @@ export function registerManipulateTools(server: McpServer): void {
             .string()
             .max(10000)
             .describe(
-              "New page order as comma-separated 1-indexed numbers, e.g. '3,1,2,4' or '1,1,2' (duplicates allowed)",
+              "New page order as comma-separated 1-indexed numbers, e.g. '3,1,2,4' or '1,1,2' (duplicates allowed; up to 2000 pages)",
             ),
           outputPath: z
             .string()
@@ -901,23 +930,18 @@ export function registerManipulateTools(server: McpServer): void {
         const sourceDoc = await loadExistingPdf(resolvedPath);
         const totalPages = sourceDoc.getPageCount();
 
-        // Parse page order
-        const orderParts = pageOrder.split(",").map((s) => s.trim());
-        const indices: number[] = [];
-        for (const part of orderParts) {
-          const num = parseInt(part, 10);
-          if (isNaN(num) || num < 1 || num > totalPages) {
-            throw new PdfError(
-              `Invalid page number: ${part}. Must be between 1 and ${totalPages}.`,
-              "INVALID_INPUT",
-            );
-          }
-          indices.push(num - 1); // Convert to 0-indexed
-        }
+        // Parse the new order through the shared single-page validator so bad
+        // syntax surfaces INVALID_INPUT and an out-of-range page surfaces
+        // PAGE_OUT_OF_RANGE — consistent with every other page-selecting tool.
+        // Order and duplicates are preserved (deliberately no Set/sort).
+        const indices = pageOrder
+          .split(",")
+          .map((s) => s.trim())
+          .map((part) => parseSinglePage(part, totalPages) - 1);
 
-        if (indices.length > 2000) {
+        if (indices.length > MAX_REORDER_OUTPUT_PAGES) {
           throw new PdfError(
-            "Page order exceeds maximum of 2000 output pages.",
+            `Page order exceeds maximum of ${MAX_REORDER_OUTPUT_PAGES.toLocaleString()} output pages.`,
             "RESOURCE_LIMIT",
           );
         }
@@ -942,11 +966,7 @@ export function registerManipulateTools(server: McpServer): void {
           pageOrder,
           pageCount: indices.length,
           flattened: flatten === true,
-          formFields: {
-            preserved: flatten ? 0 : formReport.preserved,
-            renamed: formReport.renamed,
-            dropped: formReport.dropped,
-          },
+          formFields: reportFormFields(formReport, flatten === true),
           fileSize,
         });
       } catch (error) {
@@ -1034,11 +1054,7 @@ export function registerManipulateTools(server: McpServer): void {
           removedPages: pages,
           remainingPageCount: remainingIndices.length,
           flattened: flatten === true,
-          formFields: {
-            preserved: flatten ? 0 : formReport.preserved,
-            renamed: formReport.renamed,
-            dropped: formReport.dropped,
-          },
+          formFields: reportFormFields(formReport, flatten === true),
           fileSize,
         });
       } catch (error) {
