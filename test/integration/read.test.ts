@@ -284,7 +284,7 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
     corruptFormPath = join(workDir, "corrupt-form.pdf");
     await writeFile(corruptFormPath, await makeCorruptFormPdf());
 
-    // 500 occurrences > MAX_SEARCH_RESULTS (500) and the resulting result set
+    // 700 occurrences > MAX_SEARCH_RESULTS (500) and the resulting result set
     // serializes well past CHARACTER_LIMIT (25k), forcing the array trim.
     manyMatchesPath = join(workDir, "many-matches.pdf");
     await writeFile(

@@ -56,6 +56,14 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 // throw "WinAnsi cannot encode" at render time. These are the safe non-ASCII ones.
 const WINANSI_SAFE_SYMBOLS = new Set(["€", "£", "¥", "¢"]);
 
+// Reverse lookup symbol -> ISO code, built once from CURRENCY_SYMBOLS. Lets a
+// raw non-WinAnsi symbol passed as currency (e.g. ₹) resolve to its ISO code
+// (INR) instead of being stripped to nothing. Ambiguous symbols shared by
+// several codes ($ kr ¥) are ASCII/WinAnsi-safe, so they never reach this map.
+const SYMBOL_TO_ISO: Record<string, string> = Object.fromEntries(
+  Object.entries(CURRENCY_SYMBOLS).map(([iso, symbol]) => [symbol, iso]),
+);
+
 function currencySymbol(currency: string): string {
   const trimmed = currency.trim();
   const candidate = CURRENCY_SYMBOLS[trimmed.toUpperCase()] ?? trimmed;
@@ -63,9 +71,11 @@ function currencySymbol(currency: string): string {
     (ch) => ch.charCodeAt(0) <= 0x7f || WINANSI_SAFE_SYMBOLS.has(ch),
   );
   if (renderable) return candidate;
-  // Non-WinAnsi symbol (e.g. ₹/₩/₺): fall back to the ASCII ISO code so the
-  // invoice renders (e.g. "INR 37.01") instead of throwing. Strip any residual
-  // non-ASCII so a raw non-WinAnsi symbol passed directly is also safe.
+  // Non-WinAnsi symbol (e.g. ₹/₩/₺): first try resolving it to its ISO code via
+  // the reverse map (₹ -> "INR") so the invoice renders "INR 37.01".
+  const iso = SYMBOL_TO_ISO[trimmed];
+  if (iso) return iso;
+  // Unknown non-WinAnsi symbol: strip any residual non-ASCII so it stays safe.
   return trimmed.toUpperCase().replace(/[^\x20-\x7E]/g, "");
 }
 

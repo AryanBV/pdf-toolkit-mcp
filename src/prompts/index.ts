@@ -67,14 +67,18 @@ export function registerPrompts(server: McpServer): void {
         return Number.isFinite(n) ? n : undefined;
       };
 
-      const parsedItems = items.split(";").map((entry) => {
-        const parts = entry.trim().split(":");
-        return {
-          description: parts[0]?.trim() ?? "",
-          quantity: toNumberOrUndefined(parts[1]),
-          unitPrice: toNumberOrUndefined(parts[2]),
-        };
-      });
+      const parsedItems = items
+        .split(";")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+        .map((entry) => {
+          const parts = entry.split(":");
+          return {
+            description: parts[0]?.trim() ?? "",
+            quantity: toNumberOrUndefined(parts[1]),
+            unitPrice: toNumberOrUndefined(parts[2]),
+          };
+        });
 
       const today = new Date().toISOString().slice(0, 10);
 
@@ -90,7 +94,6 @@ export function registerPrompts(server: McpServer): void {
       // still apply otherwise.
       const optional: Record<string, string | undefined> = {
         currency: blankToUndefined(currency),
-        taxRate: blankToUndefined(tax_rate),
         dueDate: blankToUndefined(due_date),
         companyAddress: blankToUndefined(company_address),
         clientAddress: blankToUndefined(client_address),
@@ -100,6 +103,11 @@ export function registerPrompts(server: McpServer): void {
       for (const [key, value] of Object.entries(optional)) {
         if (value !== undefined) data[key] = value;
       }
+
+      // Emit taxRate as a JSON number (matching quantity/unitPrice) when a
+      // valid numeric value is supplied; the invoice schema accepts both.
+      const taxRate = toNumberOrUndefined(tax_rate);
+      if (taxRate !== undefined) data.taxRate = taxRate;
 
       const text = [
         `Create an invoice PDF using the \`pdf_create_from_template\` tool with these parameters:`,

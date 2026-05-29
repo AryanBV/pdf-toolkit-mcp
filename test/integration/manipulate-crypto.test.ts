@@ -336,6 +336,79 @@ describe("pdf_encrypt (AES-256) / pdf_compare / pdf_embed_qr_code bounds", () =>
     expect(payload.drawnSize.height).toBeLessThan(100);
   }, 30_000);
 
+  // ── QR-ROTATE: placement respects the rotated viewer space ─────────────
+  it("embeds a QR onto a 90°-rotated page and preserves the rotation", async () => {
+    // A 300x400 page rotated 90° presents a 400(w) x 300(h) viewer space. A QR
+    // small enough to fit that swapped box must succeed without un-rotating.
+    const inputPath = join(workDir, "qr-rot-src.pdf");
+    const outputPath = join(workDir, "qr-rot-out.pdf");
+    {
+      const doc = await pdfLib.PDFDocument.create();
+      const page = doc.addPage([300, 400]);
+      page.drawText("rotated QR target", { x: 20, y: 360, size: 12 });
+      page.setRotation(pdfLib.degrees(90));
+      await writeFile(inputPath, await doc.save());
+    }
+
+    const result = (await client.callTool({
+      name: "pdf_embed_qr_code",
+      arguments: {
+        filePath: inputPath,
+        outputPath,
+        content: "https://example.com",
+        page: 1,
+        // Fits within the rotated 400x300 viewer space.
+        x: 50,
+        y: 50,
+        size: 100,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.outputPath).toBe(outputPath);
+    expect(payload.fileSize).toMatch(/KB$/);
+
+    // The page's display rotation must be untouched by the QR embed.
+    const bytes = await readFile(outputPath);
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    expect(doc.getPage(0).getRotation().angle).toBe(90);
+  }, 30_000);
+
+  it("rejects a QR that overflows the rotated viewer height (INVALID_INPUT)", async () => {
+    // On the rotated page the visible height is only 300pt (the page's width). A
+    // QR taller than that must be rejected against the rotated viewer box, not
+    // the un-rotated 400pt height.
+    const inputPath = join(workDir, "qr-rot-overflow-src.pdf");
+    const outputPath = join(workDir, "qr-rot-overflow-out.pdf");
+    {
+      const doc = await pdfLib.PDFDocument.create();
+      const page = doc.addPage([300, 400]);
+      page.setRotation(pdfLib.degrees(90));
+      await writeFile(inputPath, await doc.save());
+    }
+
+    const result = (await client.callTool({
+      name: "pdf_embed_qr_code",
+      arguments: {
+        filePath: inputPath,
+        outputPath,
+        content: "https://example.com",
+        page: 1,
+        // y=50 + size=280 = 330 > 300 viewer height → overflows.
+        x: 50,
+        y: 50,
+        size: 280,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toContain("INVALID_INPUT");
+    expect(text).toMatch(/does not fit|page size/i);
+    expect(text).not.toMatch(/\bat .*\(.*:\d+:\d+\)/); // no stack frames
+  }, 30_000);
+
   // ── reorder error codes (shared single-page validator) ────────────────
   it("reorder reports PAGE_OUT_OF_RANGE for an out-of-range page number", async () => {
     const src = join(workDir, "reorder-bad-src.pdf");

@@ -292,6 +292,15 @@ describe("form-preserving merge / split / delete_pages / reorder", () => {
     const bytes = await readFile(out);
     const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
     expect(doc.getPageCount()).toBe(2);
+
+    // The baked field value must be extractable as page text (proof it was
+    // burned into the content stream, not just dropped with the field).
+    const extract = (await client.callTool({
+      name: "pdf_extract_text",
+      arguments: { filePath: out },
+    })) as ToolResultLike;
+    expect(extract.isError).toBeFalsy();
+    expect(textOf(extract)).toContain("VisibleValue");
   }, 30_000);
 
   // ── plain (form-less) merge still works, zero form activity ───────────
@@ -392,7 +401,10 @@ describe("form-preserving merge / split / delete_pages / reorder", () => {
 
     // The form fields on the duplicated page must NOT be reported as preserved.
     expect(payload.formFields.preserved).toBe(0);
-    expect(payload.formFields.dropped.length).toBeGreaterThan(0);
+    // The fixture has exactly four top-level fields (name, agree, color, size);
+    // duplicating the page drops all four (each widget would belong to two page
+    // copies), so the count is deterministic.
+    expect(payload.formFields.dropped.length).toBe(4);
     // The reason must be explicit about duplication.
     expect(payload.formFields.dropped.join(" ")).toMatch(/duplicat/i);
     // And the original field name must appear in the dropped report.

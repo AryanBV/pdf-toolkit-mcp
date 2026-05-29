@@ -109,8 +109,10 @@ function makeColumn(items: PositionedTextItem[]): Column {
  * title or footer) are emitted as full-width bands rather than collapsing the
  * two-column detection. The reading order is band-aware: title band → left
  * column → right column → footer band. A genuinely single-column page returns
- * exactly one column (byte-identical to the prior behavior). The >3-column
- * over-segmentation guard is preserved.
+ * exactly one column (byte-identical to the prior behavior). A page that
+ * fragments into more than 2 content columns falls back to honest
+ * single-column reading order (over-segmentation guard) rather than
+ * interleaving columns this 2-column model cannot represent.
  */
 function detectColumns(items: PositionedTextItem[]): Column[] {
   if (items.length === 0) return [];
@@ -238,16 +240,17 @@ function detectColumns(items: PositionedTextItem[]): Column[] {
   if (
     columnRows <= crossingRows ||
     leftItems.length === 0 ||
-    rightItems.length === 0 ||
-    rows.length === 0
+    rightItems.length === 0
   ) {
     return singleColumn;
   }
 
-  // Over-segmentation guard (preserved): if the column-body items themselves
-  // fragment into more than 3 x-clusters, a single-column reading order is
-  // safer than fragmenting. Crossing (full-width) rows are excluded so a
-  // spanning title does not inflate the count.
+  // Over-segmentation guard: detectColumns reconstructs at most 2 content
+  // columns (plus full-width bands). If the column-body items themselves
+  // fragment into more than 2 x-clusters, the page is a genuine 3-column (or
+  // finer) layout that this 2-column model can only interleave — so an honest
+  // single-column reading order is safer than fragmenting. Crossing (full-width)
+  // rows are excluded so a spanning title does not inflate the count.
   const columnItems = [...leftItems, ...rightItems].sort((a, b) => a.x - b.x);
   let clusters = 0;
   let clusterRight = -Infinity;
@@ -255,7 +258,7 @@ function detectColumns(items: PositionedTextItem[]): Column[] {
     if (i.x - clusterRight > gapThreshold) clusters++;
     clusterRight = Math.max(clusterRight, i.x + i.width);
   }
-  if (clusters > 3) return singleColumn;
+  if (clusters > 2) return singleColumn;
 
   const bottomY = columnRowYs.length > 0 ? Math.min(...columnRowYs) : -Infinity;
 
@@ -459,9 +462,11 @@ function pageToMarkdown(layout: PageTextLayout): string {
 
   // All-caps fallback heading level = one below the deepest font-size-derived
   // heading. If the page has no larger-than-body sizes, the deepest is treated
-  // as 0 so an isolated all-caps line becomes a level-1 heading. Capped at 6.
+  // as 0 so an isolated all-caps line becomes a level-1 heading. Capped at 3 to
+  // match headingLevelFor (the font-size path maxes at level 3), so the all-caps
+  // fallback never emits a level the font-size path cannot.
   const deepestFontHeading = Math.min(headingSizes.length, 3);
-  const allCapsLevel = Math.min(deepestFontHeading + 1, 6);
+  const allCapsLevel = Math.min(deepestFontHeading + 1, 3);
 
   // detectColumns already returns columns/bands in final reading order
   // (title → left → right → footer); do NOT re-sort by minX, which would
@@ -508,6 +513,9 @@ function pageToMarkdown(layout: PageTextLayout): string {
       // vertical gap and reads like an all-caps label is promoted to a heading
       // one level below the deepest font-size-derived heading. Font size stays
       // the primary signal — this only fires when font size alone said "body".
+      // Known limitation: promotion requires a big gap ABOVE the line, which
+      // needs i > 0 — so it never fires for the FIRST line of a column/band
+      // (an all-caps section header that opens a column stays a paragraph).
       if (level === 0 && bigGap && isAllCapsHeading(line.text)) {
         level = allCapsLevel;
       }

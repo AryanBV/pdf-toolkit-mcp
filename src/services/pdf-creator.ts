@@ -546,10 +546,11 @@ function renderList(
     return renderListItem(child, ctx, marker, `${key}-${i}`, depth + 1);
   });
 
-  // Indent deeper-nested lists further to the right.
+  // Indent deeper-nested lists further to the right — scale the extra
+  // paddingLeft by depth so each nesting level steps in by LIST_INDENT_STEP.
   const blockStyle: Style =
     depth > 0
-      ? { ...ctx.styles.listBlock, paddingLeft: LIST_INDENT_STEP }
+      ? { ...ctx.styles.listBlock, paddingLeft: depth * LIST_INDENT_STEP }
       : ctx.styles.listBlock;
 
   return h(View, { key, style: blockStyle }, ...items);

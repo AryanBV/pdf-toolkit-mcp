@@ -199,7 +199,10 @@ export function registerCreateTools(server: McpServer): void {
         if (fontPath) {
           // Custom font: embed via fontkit so non-Latin scripts render.
           const resolvedFontPath = await validateFontPath(fontPath);
-          await validateFileSize(resolvedFontPath);
+          await validateFileSize(resolvedFontPath, undefined, {
+            label: "Font file",
+            splittable: false,
+          });
           const fontBuffer = await readFile(resolvedFontPath);
           const fontBytes = toUint8Array(fontBuffer);
 
@@ -378,7 +381,10 @@ export function registerCreateTools(server: McpServer): void {
         let customFont: PDFFont | undefined;
         if (fontPath) {
           const resolvedFontPath = await validateFontPath(fontPath);
-          await validateFileSize(resolvedFontPath);
+          await validateFileSize(resolvedFontPath, undefined, {
+            label: "Font file",
+            splittable: false,
+          });
           const fontBuffer = await readFile(resolvedFontPath);
           const fontBytes = toUint8Array(fontBuffer);
 
@@ -521,6 +527,7 @@ export function registerCreateTools(server: McpServer): void {
             .describe("Absolute path to the source PDF file"),
           text: z
             .string()
+            .min(1)
             .max(1000)
             .describe("Watermark text to overlay on pages"),
           outputPath: z
@@ -726,7 +733,10 @@ export function registerCreateTools(server: McpServer): void {
         const resolvedOutput = await validateOutputPath(outputPath, filePath);
 
         const resolvedImagePath = await validateImagePath(imagePath);
-        await validateFileSize(resolvedImagePath);
+        await validateFileSize(resolvedImagePath, undefined, {
+          label: "Image file",
+          splittable: false,
+        });
         const ext = extname(resolvedImagePath).toLowerCase();
         const imageBuffer = await readFile(resolvedImagePath);
         const imageBytes = toUint8Array(imageBuffer);
@@ -901,13 +911,17 @@ export function registerCreateTools(server: McpServer): void {
           author,
         });
 
+        // Read the page count from the in-memory bytes BEFORE writing, so a
+        // parse failure here surfaces an error without orphaning a file on disk.
+        const pdfDoc = await pdfLib.PDFDocument.load(bytes);
+        const pageCount = pdfDoc.getPageCount();
+
         await writeFile(resolvedOutput, bytes);
         const fileSize = await getFileSize(resolvedOutput);
-        const pdfDoc = await pdfLib.PDFDocument.load(bytes);
 
         return toolSuccess({
           outputPath: resolvedOutput,
-          pageCount: pdfDoc.getPageCount(),
+          pageCount,
           pageSize: size,
           fileSize,
         });
@@ -983,14 +997,19 @@ export function registerCreateTools(server: McpServer): void {
         const element = await build(parsed.data);
 
         const bytes = await renderTemplate(element);
+
+        // Read the page count from the in-memory bytes BEFORE writing, so a
+        // parse failure here surfaces an error without orphaning a file on disk.
+        const pdfDoc = await pdfLib.PDFDocument.load(bytes);
+        const pageCount = pdfDoc.getPageCount();
+
         await writeFile(resolvedOutput, bytes);
         const fileSize = await getFileSize(resolvedOutput);
-        const pdfDoc = await pdfLib.PDFDocument.load(bytes);
 
         return toolSuccess({
           outputPath: resolvedOutput,
           templateName,
-          pageCount: pdfDoc.getPageCount(),
+          pageCount,
           fileSize,
         });
       } catch (error) {

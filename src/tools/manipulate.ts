@@ -896,7 +896,7 @@ export function registerManipulateTools(server: McpServer): void {
             .describe("Absolute path to the source PDF file"),
           pageOrder: z
             .string()
-            .max(10000)
+            .max(20000)
             .describe(
               "New page order as comma-separated 1-indexed numbers, e.g. '3,1,2,4' or '1,1,2' (duplicates allowed; up to 2000 pages)",
             ),

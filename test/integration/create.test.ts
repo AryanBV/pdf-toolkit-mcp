@@ -348,6 +348,54 @@ describe("create tools (react-pdf + remark engine)", () => {
     expect(text).not.toMatch(NO_STACK);
   }, 30_000);
 
+  it("honors pageSize 'Letter' (612x792) and echoes the title-case size", async () => {
+    const out = join(workDir, "md-letter.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_markdown",
+      arguments: {
+        markdown: "# Letter Sized\n\nBody text on a US Letter page.",
+        outputPath: out,
+        pageSize: "Letter",
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.pageSize).toBe("Letter");
+
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    const { width, height } = doc.getPage(0).getSize();
+    expect(width).toBeCloseTo(612, 0);
+    expect(height).toBeCloseTo(792, 0);
+  }, 30_000);
+
+  it("honors pageSize 'Legal' (612x1008) and echoes the title-case size", async () => {
+    const out = join(workDir, "md-legal.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_markdown",
+      arguments: {
+        markdown: "# Legal Sized\n\nBody text on a US Legal page.",
+        outputPath: out,
+        pageSize: "Legal",
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.pageSize).toBe("Legal");
+
+    const bytes = await readFile(out);
+    expect(new TextDecoder().decode(bytes.subarray(0, 5))).toBe("%PDF-");
+
+    const doc = await pdfLib.PDFDocument.load(new Uint8Array(bytes));
+    const { width, height } = doc.getPage(0).getSize();
+    expect(width).toBeCloseTo(612, 0);
+    expect(height).toBeCloseTo(1008, 0);
+  }, 30_000);
+
   // ── pdf_create_from_template ──────────────────────────────────────────
   it("generates an invoice from the prompt's data shape with client + line item", async () => {
     const out = join(workDir, "invoice.pdf");
@@ -429,6 +477,31 @@ describe("create tools (react-pdf + remark engine)", () => {
     expect(text).not.toContain("₹");
   }, 30_000);
 
+  it("falls back to an ISO code when the currency is the raw rupee symbol (₹ → INR)", async () => {
+    // Passing the non-WinAnsi rupee SYMBOL directly must not crash the Helvetica
+    // invoice; it falls back to the ASCII ISO code so the amount renders safely.
+    const out = join(workDir, "invoice-rupee-symbol.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_template",
+      arguments: {
+        templateName: "invoice",
+        data: {
+          companyName: "Rupee Symbol Co",
+          clientName: "Client Pvt Ltd",
+          invoiceNumber: "INV-RUPEE-1",
+          currency: "₹",
+          items: [{ description: "Widget", quantity: 2, unitPrice: 10 }],
+        },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const text = await extractAll(client, out);
+    expect(text).toContain("INR");
+    expect(text).not.toContain("₹");
+  }, 30_000);
+
   it("defaults the invoice currency to USD ($) when none is provided", async () => {
     const out = join(workDir, "invoice-default-usd.pdf");
     const result = (await client.callTool({
@@ -490,6 +563,54 @@ describe("create tools (react-pdf + remark engine)", () => {
     const text = await extractAll(client, out);
     expect(text).toContain("Bob Recipient");
     expect(text).toContain("Greetings");
+  }, 30_000);
+
+  it("letter body: a SINGLE newline soft-wraps into one paragraph (both sentences present)", async () => {
+    // splitParagraphs collapses a lone newline to a space, so the two sentences
+    // become one soft-wrapping paragraph. Both must survive into the text.
+    const out = join(workDir, "letter-soft-wrap.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_template",
+      arguments: {
+        templateName: "letter",
+        data: {
+          senderName: "Alice Sender",
+          recipientName: "Bob Recipient",
+          subject: "Soft Wrap",
+          body: "Sentence one of the body.\nSentence two of the body.",
+        },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const text = await extractAll(client, out);
+    expect(text).toContain("Sentence one of the body.");
+    expect(text).toContain("Sentence two of the body.");
+  }, 30_000);
+
+  it("letter body: a BLANK-LINE separator yields two paragraphs (both sentences present)", async () => {
+    // A blank line splits the body into two distinct paragraphs; both texts must
+    // still render.
+    const out = join(workDir, "letter-blank-line.pdf");
+    const result = (await client.callTool({
+      name: "pdf_create_from_template",
+      arguments: {
+        templateName: "letter",
+        data: {
+          senderName: "Alice Sender",
+          recipientName: "Bob Recipient",
+          subject: "Blank Line",
+          body: "Paragraph one of the body.\n\nParagraph two of the body.",
+        },
+        outputPath: out,
+      },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const text = await extractAll(client, out);
+    expect(text).toContain("Paragraph one of the body.");
+    expect(text).toContain("Paragraph two of the body.");
   }, 30_000);
 
   it("rejects invalid template data (items not an array) with INVALID_INPUT", async () => {
