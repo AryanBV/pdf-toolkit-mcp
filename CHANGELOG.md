@@ -126,6 +126,71 @@ for a later stable-API milestone.
 - `pdf_get_form_fields` no longer silently masks a corrupt form structure as
   "no form" — it surfaces a real `CORRUPT_PDF` error.
 
+### Quality & correctness
+
+A round of surgical correctness fixes on top of the changes above:
+
+- **Listbox field reporting** — `PDFOptionList` fields now report their true
+  type `listbox` (multi-select) in `pdf_get_form_fields`, alongside the existing
+  `radiogroup` reporting for radio groups, instead of being lumped under a
+  generic type.
+- **`pdf_reorder_pages` error-code consistency** — the new page order is parsed
+  through the shared single-page validator, so malformed input surfaces
+  `INVALID_INPUT` and an out-of-range page surfaces `PAGE_OUT_OF_RANGE`, matching
+  every other page-selecting tool.
+- **Rotation-aware QR placement** — `pdf_embed_qr_code` reads the page `/Rotate`
+  flag, anchors in viewer space, and counter-rotates so the code lands in the
+  correct corner and reads upright on rotated pages (joining
+  `pdf_add_page_numbers`).
+- **Zero-page guards** — `pdf_rotate_pages`, `pdf_add_page_numbers`, and other
+  page operations throw a clear `INVALID_INPUT` on a PDF with no pages instead of
+  failing obscurely.
+- **Encrypted-vs-corrupt classification** — `loadExistingPdf` distinguishes an
+  encrypted document (`ENCRYPTED_PDF`) from a structurally broken one
+  (`CORRUPT_PDF`) via pdf-lib's typed error, so the two are no longer conflated.
+- **`renamed` is now `{ from, to }` pairs** — the form report's `renamed` array
+  carries both the original and namespaced names, so callers know the exact name
+  to address a relocated field by (previously bare strings).
+- **Flatten honesty** — `pdf_merge`/`split`/`reorder`/`delete` and `pdf_flatten`
+  return a `flattened` boolean stating whether interactivity was baked out.
+- **Markdown reading-order improvements** in `pdf_to_markdown` — asymmetric
+  two-column detection, all-caps line → heading promotion, and wrapped list-item
+  continuation lines folded back into their item.
+- **Multi-paragraph template bodies** — the `report`, `letter`, and `invoice`
+  templates split body text on blank lines (via a shared `splitParagraphs`
+  helper) and render each paragraph as its own node instead of collapsing into
+  one block. For `invoice`, this applies to the `paymentTerms` and `notes`
+  sections.
+- **Code-block wrapping** — fenced code blocks in `pdf_create_from_markdown`
+  hard-wrap long unbroken lines at a conservative monospace width so they
+  page-wrap instead of overflowing the page.
+- **`pageSize`/`limit` unification** — `pdf_create` and `pdf_create_from_markdown`
+  share the same title-case `A4`/`Letter`/`Legal` option (default A4) and
+  consistent page/limit handling.
+- **PNG size reduction** — `pdf_render_pages` emits opaque RGB PNGs (dropping the
+  constant alpha plane) for smaller image files and base64 inline blocks.
+- **GFM table column sizing & alignment** — `pdf_create_from_markdown` sizes table
+  columns proportionally to their longest cell (clamped) and honors the GFM
+  per-column alignment (left/center/right) instead of distributing every column
+  equally.
+- **Reproducible created PDFs** — `pdf_create_from_markdown` and the `invoice` /
+  `report` / `letter` templates pin their creation/modification dates to the Unix
+  epoch so identical input renders byte-identically (matching their
+  `idempotentHint`). `pdf_create_from_template`'s `idempotentHint` is set to
+  `false` because the invoice date defaults to the current date when omitted.
+- **`pdf_fill_form` clearer errors** — an empty `fields` object, or a value not in
+  a radio/option-list field's option set, now throws a coded error that lists the
+  valid choices instead of failing obscurely.
+- **`pdf_create` usable-area guard** — a margin/font-size combination that leaves
+  no room to draw on the chosen page size now throws a clear `INVALID_INPUT`
+  rather than producing an empty or broken PDF.
+- **`pdf_add_watermark` non-Latin guard** — watermark text outside the built-in
+  WinAnsi font's range surfaces a coded `UNSUPPORTED_FORMAT` error up front
+  instead of a cryptic encoding failure mid-draw.
+- **Transient engine-load resilience** — a failed lazy import of the react-pdf /
+  remark engines no longer poisons every later call; the cached promise is reset
+  so the next invocation retries.
+
 ### Removed
 
 - **`pdf_search` `regex` parameter removed** — search is now literal,

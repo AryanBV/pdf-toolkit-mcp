@@ -132,30 +132,30 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 22 tools organized by category:
 
-| Category       | Tool                       | Description                                                                   |
-| -------------- | -------------------------- | ----------------------------------------------------------------------------- |
-| **Read**       | `pdf_extract_text`         | Extract text from PDF pages (first 10 by default)                             |
-|                | `pdf_get_metadata`         | Get title, author, subject, page count, dates, producer, file size            |
-|                | `pdf_get_form_fields`      | List form fields with names, types, values, and required status               |
-|                | `pdf_to_markdown`          | Convert a PDF to reading-order Markdown (columns, headings, lists)            |
-|                | `pdf_search`               | Find text across pages; returns page numbers and snippets (literal substring) |
-|                | `pdf_compare`              | Page-by-page text diff between two PDFs                                       |
-| **Manipulate** | `pdf_merge`                | Merge multiple PDFs into one (preserves form fields)                          |
-|                | `pdf_split`                | Extract page ranges into a new PDF (preserves form fields)                    |
-|                | `pdf_delete_pages`         | Delete a page range, keeping the rest (preserves form fields)                 |
-|                | `pdf_reorder_pages`        | Reorder pages in any order (duplicates allowed; preserves form fields)        |
-|                | `pdf_rotate_pages`         | Rotate pages by 90, 180, or 270 degrees                                       |
-|                | `pdf_flatten`              | Bake form-field values into static content (remove interactivity)             |
-|                | `pdf_encrypt`              | AES-256 password protection with user/owner passwords                         |
-| **Create**     | `pdf_create`               | Create new PDF from text content                                              |
-|                | `pdf_create_from_markdown` | Create rich PDF from Markdown (headings, tables, lists, code blocks)          |
-|                | `pdf_create_from_template` | Create PDF from template (invoice, report, letter)                            |
-|                | `pdf_fill_form`            | Fill form fields (text, checkbox, dropdown, radio)                            |
-|                | `pdf_add_watermark`        | Add text watermark to pages                                                   |
-|                | `pdf_add_page_numbers`     | Add page numbers (configurable position and format)                           |
-|                | `pdf_embed_image`          | Embed PNG or JPEG image into a page                                           |
-|                | `pdf_embed_qr_code`        | Embed QR code or barcode (Code128, DataMatrix, EAN-13, PDF417, Aztec)         |
-| **Render**     | `pdf_render_pages`         | Render pages to PNG/JPEG (or inline images) so a vision model can read them   |
+| Category       | Tool                       | Description                                                                                                                        |
+| -------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Read**       | `pdf_extract_text`         | Extract text from PDF pages (first 10 by default)                                                                                  |
+|                | `pdf_get_metadata`         | Get title, author, subject, page count, dates, producer, file size                                                                 |
+|                | `pdf_get_form_fields`      | List form fields (text, checkbox, dropdown, radiogroup, listbox, button, signature) with names, types, values, and required status |
+|                | `pdf_to_markdown`          | Convert a PDF to reading-order Markdown (columns, headings, lists)                                                                 |
+|                | `pdf_search`               | Find text across pages; returns page numbers and snippets (literal substring)                                                      |
+|                | `pdf_compare`              | Page-by-page text diff between two PDFs                                                                                            |
+| **Manipulate** | `pdf_merge`                | Merge multiple PDFs into one (preserves form fields)                                                                               |
+|                | `pdf_split`                | Extract page ranges into a new PDF (preserves form fields)                                                                         |
+|                | `pdf_delete_pages`         | Delete a page range, keeping the rest (preserves form fields)                                                                      |
+|                | `pdf_reorder_pages`        | Reorder pages in any order (duplicates allowed; preserves form fields)                                                             |
+|                | `pdf_rotate_pages`         | Rotate pages by 90, 180, or 270 degrees                                                                                            |
+|                | `pdf_flatten`              | Bake form-field values into static content (remove interactivity)                                                                  |
+|                | `pdf_encrypt`              | AES-256 password protection with user/owner passwords                                                                              |
+| **Create**     | `pdf_create`               | Create new PDF from text content (pageSize A4/Letter/Legal)                                                                        |
+|                | `pdf_create_from_markdown` | Create rich PDF from Markdown (headings, tables, lists, code; A4/Letter/Legal)                                                     |
+|                | `pdf_create_from_template` | Create PDF from template (invoice, report, letter)                                                                                 |
+|                | `pdf_fill_form`            | Fill form fields (text, checkbox, dropdown, radiogroup, listbox multi-select)                                                      |
+|                | `pdf_add_watermark`        | Add text watermark to pages                                                                                                        |
+|                | `pdf_add_page_numbers`     | Add page numbers (configurable position and format)                                                                                |
+|                | `pdf_embed_image`          | Embed PNG or JPEG image into a page                                                                                                |
+|                | `pdf_embed_qr_code`        | Embed QR code or barcode (Code128, DataMatrix, EAN-13, PDF417, Aztec)                                                              |
+| **Render**     | `pdf_render_pages`         | Render pages to PNG/JPEG (or inline images) so a vision model can read them                                                        |
 
 ## Templates
 
@@ -253,7 +253,7 @@ Returns matches with the page number and a surrounding snippet. Search is a lite
 
 ## Form-Preserving Merge, Split, Delete & Flatten
 
-Merging, splitting, reordering, and deleting pages **preserve AcroForm fields**. Fields whose names collide across inputs are auto-namespaced per source, and each tool reports `{ preserved, renamed, dropped }`.
+Merging, splitting, reordering, and deleting pages **preserve AcroForm fields**. Fields whose names collide across inputs are auto-namespaced per source, and each tool reports `{ preserved, renamed, dropped }`. `renamed` is an array of `{ from, to }` pairs — use the `to` value (the namespaced name) to address a renamed field afterward. These tools and `pdf_flatten` also return a `flattened` boolean indicating whether interactivity was baked into static content.
 
 > "Merge these three forms and flatten the result"
 
@@ -305,13 +305,13 @@ Supported types: QR Code, Code128, DataMatrix, EAN-13, PDF417, Aztec Code. Posit
 
 The server ships 5 MCP prompts that script multi-step workflows for the client:
 
-| Prompt              | Arguments                                        | What it does                                                               |
-| ------------------- | ------------------------------------------------ | -------------------------------------------------------------------------- |
-| `create-invoice`    | company_name, client_name, invoice_number, items | Parses line items and builds a `pdf_create_from_template` call             |
-| `fill-form`         | pdf_path                                         | Discover fields with `pdf_get_form_fields`, then fill with `pdf_fill_form` |
-| `read-scanned-pdf`  | pdf_path                                         | Try text extraction, fall back to inline `pdf_render_pages` for vision     |
-| `pdf-to-markdown`   | pdf_path                                         | Convert to Markdown, then optionally summarize                             |
-| `merge-and-flatten` | pdf_paths, output_path                           | Merge multiple PDFs and flatten the form fields                            |
+| Prompt              | Arguments                                                                                                                                         | What it does                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `create-invoice`    | company_name, client_name, invoice_number, items (+ optional currency, tax_rate, due_date, company_address, client_address, payment_terms, notes) | Parses line items and builds a `pdf_create_from_template` call             |
+| `fill-form`         | pdf_path                                                                                                                                          | Discover fields with `pdf_get_form_fields`, then fill with `pdf_fill_form` |
+| `read-scanned-pdf`  | pdf_path                                                                                                                                          | Try text extraction, fall back to inline `pdf_render_pages` for vision     |
+| `pdf-to-markdown`   | pdf_path                                                                                                                                          | Convert to Markdown, then optionally summarize                             |
+| `merge-and-flatten` | pdf_paths, output_path                                                                                                                            | Merge multiple PDFs and flatten the form fields                            |
 
 ## Resources
 
@@ -344,7 +344,7 @@ Just ask naturally:
 
 ## Known Limitations
 
-- **Merge/Split/Reorder/Delete**: Form fields are preserved; colliding field names are auto-namespaced and reported as `renamed`. Exotic forms that can't be safely reconstructed are reported as `dropped` rather than failing the operation.
+- **Merge/Split/Reorder/Delete**: Form fields are preserved; colliding field names are auto-namespaced and reported in `renamed` as `{ from, to }` pairs (address the field by its `to` name afterward). Exotic forms that can't be safely reconstructed are reported as `dropped` rather than failing the operation. Each tool (and `pdf_flatten`) returns a `flattened` boolean.
 - **Text extraction**: Returns PDF stream order, not visual reading order. Use `pdf_to_markdown` when reading order matters; raw `pdf_extract_text` may interleave multi-column layouts.
 - **Extract text / to Markdown**: Default to the first 10 pages to avoid exceeding LLM context. Request specific pages for longer documents.
 - **Markdown to PDF**: Supports CommonMark + GFM (headings, bold/italic, links, lists, tables, fenced code, blockquotes, rules). Raw HTML, GFM task-list checkbox state, footnotes, and code syntax highlighting are not supported.
