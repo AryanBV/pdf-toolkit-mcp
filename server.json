@@ -6,12 +6,12 @@
     "url": "https://github.com/AryanBV/pdf-toolkit-mcp",
     "source": "github"
   },
-  "version": "0.3.0",
+  "version": "0.3.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@aryanbv/pdf-toolkit-mcp",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "transport": {
         "type": "stdio"
       }

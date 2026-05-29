@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-05-29
+
+Documentation-only release. No runtime or API changes from 0.3.0; this exists so
+the npm package page carries the rewritten README.
+
+### Documentation
+
+- Rewrote the README in a plain, professional voice: removed AI-style
+  formatting (em dashes, emoji bullet lists) and the breathless framing, and
+  replaced placeholder example names (`Acme Corp`, `Your Company`, `Client
+Corp`) with consistent, realistic ones. All tool names, JSON examples,
+  defaults, and documented limitations were verified against the source.
+
 ## [0.3.0] - 2026-05-29
 
 **0.3.0 "Prism"** — an incremental pre-1.0 release focused on root-cause fixes,
