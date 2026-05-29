@@ -6,3 +6,13 @@ node_modules/
 scripts/
 CLAUDE.md
 .claude/
+
+# Registry publishing secrets and tooling — never ship to npm
+# (the package.json "files" allowlist already excludes these; this is a second layer)
+.mcpregistry_*
+mcp-publisher
+mcp-publisher.exe
+mcp-publisher_*.tar.gz
+server.json
+.env
+.env.*
