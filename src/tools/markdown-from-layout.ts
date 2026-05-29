@@ -17,7 +17,7 @@ interface Column {
 const HEADING_SCALE_RATIO = 1.15; // a line must be ≥ this × body size to be a heading
 const PARAGRAPH_GAP_RATIO = 1.6; // vertical gap (× line height) that splits paragraphs
 const SAME_LINE_RATIO = 0.6; // items within this × font size of each other share a line
-const COLUMN_GAP_RATIO = 3; // horizontal gap (× median char width) that splits columns
+const COLUMN_GAP_RATIO = 12; // horizontal gap (× median char width) that splits columns
 
 const BULLET_RE = /^[-•*‣◦·]\s+/;
 const NUMBERED_RE = /^(\d{1,3})[.)]\s+/;
@@ -64,11 +64,53 @@ function modalFontSize(items: PositionedTextItem[]): number {
   return bestSize;
 }
 
+/** Group items into rough rows by baseline proximity (top-to-bottom). */
+function clusterRows(items: PositionedTextItem[]): PositionedTextItem[][] {
+  const sorted = [...items].sort((a, b) => b.y - a.y);
+  const rows: PositionedTextItem[][] = [];
+  let bucket: PositionedTextItem[] = [];
+  let bucketY = sorted.length > 0 ? sorted[0].y : 0;
+  let bucketFontSize = sorted.length > 0 ? sorted[0].fontSize : 0;
+
+  for (const item of sorted) {
+    const dominant = Math.max(bucketFontSize, item.fontSize);
+    const tolerance = dominant * SAME_LINE_RATIO;
+    if (bucket.length === 0) {
+      bucket = [item];
+      bucketY = item.y;
+      bucketFontSize = item.fontSize;
+    } else if (Math.abs(item.y - bucketY) <= tolerance) {
+      bucket.push(item);
+      bucketFontSize = dominant;
+    } else {
+      rows.push(bucket);
+      bucket = [item];
+      bucketY = item.y;
+      bucketFontSize = item.fontSize;
+    }
+  }
+  if (bucket.length > 0) rows.push(bucket);
+  return rows;
+}
+
+/** A whole-page column spanning a body of items, plus its vertical extent. */
+function makeColumn(items: PositionedTextItem[]): Column {
+  return {
+    minX: Math.min(...items.map((i) => i.x)),
+    maxX: Math.max(...items.map((i) => i.x + i.width)),
+    items,
+  };
+}
+
 /**
- * Detect columns by clustering item x-positions. We sort items by their left
- * edge and split into a new column wherever a horizontal gap between the running
- * column's right edge and the next item exceeds a multiple of the typical glyph
- * width. Single-column documents collapse to one column.
+ * Detect columns with a whitespace-river approach. We find candidate vertical
+ * gutters from horizontal x-gaps, then accept a gutter only if it stays empty
+ * across the MAJORITY of text rows. Rows that cross the gutter (e.g. a spanning
+ * title or footer) are emitted as full-width bands rather than collapsing the
+ * two-column detection. The reading order is band-aware: title band → left
+ * column → right column → footer band. A genuinely single-column page returns
+ * exactly one column (byte-identical to the prior behavior). The >3-column
+ * over-segmentation guard is preserved.
  */
 function detectColumns(items: PositionedTextItem[]): Column[] {
   if (items.length === 0) return [];
@@ -79,36 +121,161 @@ function detectColumns(items: PositionedTextItem[]): Column[] {
         .filter((i) => i.str.length > 0)
         .map((i) => i.width / Math.max(i.str.length, 1)),
     ) || median(items.map((i) => i.fontSize)) * 0.5;
-  const gapThreshold = charWidth * COLUMN_GAP_RATIO * 4;
+  const gapThreshold = charWidth * COLUMN_GAP_RATIO;
 
-  const byX = [...items].sort((a, b) => a.x - b.x);
-  const columns: Column[] = [];
-  let current: Column | null = null;
+  const singleColumn: Column[] = [makeColumn(items)];
 
-  for (const item of byX) {
-    const right = item.x + item.width;
-    if (current === null || item.x - current.maxX > gapThreshold) {
-      current = { minX: item.x, maxX: right, items: [item] };
-      columns.push(current);
-    } else {
-      current.items.push(item);
-      if (right > current.maxX) current.maxX = right;
+  const rows = clusterRows(items);
+  if (rows.length === 0) return singleColumn;
+
+  // Whitespace-river gutter detection. Each row contributes the empty x-gaps
+  // BETWEEN its consecutive items (gaps wider than the column threshold). A
+  // real gutter is one whose river is shared by many rows — unlike a single
+  // spanning title, which simply contributes no gap. This is robust to a
+  // full-width line that would otherwise bridge a naive left-to-right maxX
+  // sweep and collapse the two columns.
+  const candidateGaps: { start: number; end: number }[] = [];
+  for (const row of rows) {
+    const sortedRow = [...row].sort((a, b) => a.x - b.x);
+    let runningRight = sortedRow[0].x + sortedRow[0].width;
+    for (let i = 1; i < sortedRow.length; i++) {
+      const left = sortedRow[i].x;
+      if (left - runningRight > gapThreshold) {
+        candidateGaps.push({ start: runningRight, end: left });
+      }
+      runningRight = Math.max(
+        runningRight,
+        sortedRow[i].x + sortedRow[i].width,
+      );
+    }
+  }
+  if (candidateGaps.length === 0) return singleColumn;
+
+  // The dominant gutter is the candidate x (gap midpoint) that the most rows
+  // keep clear AND that has text on both sides; pick the one with the broadest
+  // row support, breaking ties toward the widest river.
+  const intrudes = (row: PositionedTextItem[], x: number): boolean =>
+    row.some((i) => i.x < x && i.x + i.width > x);
+  let gutterStart = 0;
+  let gutterEnd = 0;
+  let bestScore = -1;
+  for (const gap of candidateGaps) {
+    const mid = (gap.start + gap.end) / 2;
+    let clear = 0;
+    let both = 0;
+    for (const row of rows) {
+      if (intrudes(row, mid)) continue;
+      clear++;
+      const hasLeft = row.some((i) => i.x + i.width <= mid);
+      const hasRight = row.some((i) => i.x >= mid);
+      if (hasLeft && hasRight) both++;
+    }
+    // A candidate gutter must be shared by at least one baseline that has text
+    // on BOTH sides — otherwise it is just a margin/alignment gap, not a column
+    // boundary. We deliberately do NOT require a majority here: a real
+    // two-column page can be ASYMMETRIC (e.g. 6 left rows but only 2 paired
+    // with a right-column row), where `both` is far below half of `rows.length`.
+    // The actual two-column gate is downstream — the `columnRows <= crossingRows`
+    // check, which rejects a spurious one-off gap because such a page's rows
+    // mostly CROSS the divider (full-width body lines with a lone right-aligned
+    // page number have crossingRows >= columnRows).
+    if (both === 0) continue;
+    const score = clear * 1000 + (gap.end - gap.start);
+    if (score > bestScore) {
+      bestScore = score;
+      gutterStart = gap.start;
+      gutterEnd = gap.end;
+    }
+  }
+  if (bestScore < 0) return singleColumn;
+  // The gutter "river" is the empty x-interval (gutterStart, gutterEnd); its
+  // midpoint divides left from right. A row keeps the river clear when no item
+  // intrudes into that interval — two separate column items (one ending at/
+  // before gutterStart, one starting at/after gutterEnd) do NOT cross it.
+  const gutterX = (gutterStart + gutterEnd) / 2;
+
+  // A row "crosses" (is a full-width band) only when some item STRADDLES the
+  // dividing line at gutterX — the same boundary used to partition left/right
+  // below. An ordinary two-column row has text on BOTH sides at the same
+  // baseline but no single item spans the divider, so it does not cross.
+  // Testing against gutterX (not the full [gutterStart, gutterEnd] river,
+  // which is pinned to whichever row had the shortest left line) keeps a
+  // slightly longer column line that merely pokes past gutterStart from being
+  // mis-flagged as a spanning band and collapsing the columns.
+  const rowCrosses = (row: PositionedTextItem[]): boolean =>
+    row.some((i) => i.x < gutterX && i.x + i.width > gutterX);
+
+  // Validate the gutter against the rows: a gutter is real only if it stays
+  // empty (no crossing) across the MAJORITY of rows.
+  let columnRows = 0;
+  let crossingRows = 0;
+  for (const row of rows) {
+    if (rowCrosses(row)) crossingRows++;
+    else columnRows++;
+  }
+
+  // Partition non-crossing rows into left/right PER ITEM (a single row can feed
+  // both columns), and collect crossing rows as full-width bands. Track the
+  // bottom of the column body so a crossing row below it is a footer band.
+  const leftItems: PositionedTextItem[] = [];
+  const rightItems: PositionedTextItem[] = [];
+  const columnRowYs: number[] = [];
+  const crossing: PositionedTextItem[][] = [];
+
+  for (const row of rows) {
+    if (rowCrosses(row)) {
+      crossing.push(row);
+      continue;
+    }
+    columnRowYs.push(Math.max(...row.map((i) => i.y)));
+    for (const i of row) {
+      if (i.x + i.width <= gutterX) leftItems.push(i);
+      else rightItems.push(i);
     }
   }
 
-  // Guard against over-segmentation: if columns are narrow and numerous relative
-  // to the content, a single-column reading order is safer than fragmenting.
-  if (columns.length > 3) {
-    return [
-      {
-        minX: byX[0].x,
-        maxX: Math.max(...byX.map((i) => i.x + i.width)),
-        items,
-      },
-    ];
+  // Majority of rows must respect the gutter, and both columns must carry text.
+  if (
+    columnRows <= crossingRows ||
+    leftItems.length === 0 ||
+    rightItems.length === 0 ||
+    rows.length === 0
+  ) {
+    return singleColumn;
   }
 
-  return columns;
+  // Over-segmentation guard (preserved): if the column-body items themselves
+  // fragment into more than 3 x-clusters, a single-column reading order is
+  // safer than fragmenting. Crossing (full-width) rows are excluded so a
+  // spanning title does not inflate the count.
+  const columnItems = [...leftItems, ...rightItems].sort((a, b) => a.x - b.x);
+  let clusters = 0;
+  let clusterRight = -Infinity;
+  for (const i of columnItems) {
+    if (i.x - clusterRight > gapThreshold) clusters++;
+    clusterRight = Math.max(clusterRight, i.x + i.width);
+  }
+  if (clusters > 3) return singleColumn;
+
+  const bottomY = columnRowYs.length > 0 ? Math.min(...columnRowYs) : -Infinity;
+
+  const titleItems: PositionedTextItem[] = [];
+  const footerItems: PositionedTextItem[] = [];
+  for (const row of crossing) {
+    const y = Math.max(...row.map((i) => i.y));
+    // Crossing rows below the column body are footers; everything else is
+    // treated as a leading/title band (the common spanning-header case).
+    if (y < bottomY) footerItems.push(...row);
+    else titleItems.push(...row);
+  }
+
+  const ordered: Column[] = [];
+  if (titleItems.length > 0) ordered.push(makeColumn(titleItems));
+  if (leftItems.length > 0) ordered.push(makeColumn(leftItems));
+  if (rightItems.length > 0) ordered.push(makeColumn(rightItems));
+  if (footerItems.length > 0) ordered.push(makeColumn(footerItems));
+
+  return ordered.length > 0 ? ordered : singleColumn;
 }
 
 /**
@@ -125,6 +292,12 @@ function groupLines(items: PositionedTextItem[]): Line[] {
   const lines: Line[] = [];
   let bucket: PositionedTextItem[] = [];
   let bucketY = sorted[0].y;
+  // Dominant (max) font size seen so far in the open bucket. The same-line
+  // tolerance is keyed to this, not to each item's own size, so a small
+  // superscript / footnote-ref sitting next to a large run is not wrongly
+  // split onto its own line. The bucket baseline (bucketY) stays frozen to
+  // the topmost item so ordering is stable.
+  let bucketFontSize = sorted[0].fontSize;
 
   const flush = (): void => {
     if (bucket.length === 0) return;
@@ -142,15 +315,25 @@ function groupLines(items: PositionedTextItem[]): Line[] {
   };
 
   for (const item of sorted) {
-    const tolerance = item.fontSize * SAME_LINE_RATIO;
-    if (bucket.length === 0 || Math.abs(item.y - bucketY) <= tolerance) {
+    // Tolerance keys to the DOMINANT (max) font size of the bucket including
+    // this candidate, so a large run joining a small seed (or vice versa) is
+    // admitted — a small superscript / footnote-ref next to a large run is not
+    // wrongly split onto its own line. The baseline stays frozen to the
+    // topmost item (bucketY) for stable ordering.
+    const dominant = Math.max(bucketFontSize, item.fontSize);
+    const tolerance = dominant * SAME_LINE_RATIO;
+    if (bucket.length === 0) {
       bucket.push(item);
-      // Track the topmost baseline of the bucket for stable ordering.
-      bucketY = bucket.length === 1 ? item.y : bucketY;
+      bucketY = item.y;
+      bucketFontSize = item.fontSize;
+    } else if (Math.abs(item.y - bucketY) <= tolerance) {
+      bucket.push(item);
+      bucketFontSize = dominant;
     } else {
       flush();
       bucket.push(item);
       bucketY = item.y;
+      bucketFontSize = item.fontSize;
     }
   }
   flush();
@@ -173,6 +356,55 @@ function headingLevelFor(
   const idx = headingSizes.findIndex((s) => Math.abs(s - fontSize) < 0.5);
   if (idx === -1) return 0;
   return Math.min(idx + 1, 3);
+}
+
+/**
+ * Heuristic for an all-caps heading: short, no terminal sentence punctuation,
+ * majority-alphabetic, and every cased letter is uppercase (Latin-1/extended
+ * aware via toLowerCase/toUpperCase round-trips). This is only used as a
+ * SAME-SIZE tie-breaker — font size remains the primary heading signal — so the
+ * guardrails below keep ordinary acronyms embedded in body text from
+ * false-positiving (e.g. "The PDF spec." or "Send via HTTP, then wait").
+ */
+function isAllCapsHeading(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return false;
+
+  // No terminal sentence punctuation — headings rarely end in . ! ? : ;.
+  if (/[.!?:;]$/.test(trimmed)) return false;
+
+  // Short: a heading is a label, not a sentence. Cap at 8 words.
+  const words = trimmed.split(/\s+/);
+  if (words.length > 8) return false;
+
+  // Majority of characters must be alphabetic (rejects mostly-numeric/symbol
+  // runs like "12.5%" or "$1,200 — TOTAL").
+  let alpha = 0;
+  let upper = 0;
+  let cased = 0;
+  for (const ch of trimmed) {
+    const lower = ch.toLowerCase();
+    const up = ch.toUpperCase();
+    const isLetter = lower !== up;
+    if (isLetter) {
+      alpha++;
+      cased++;
+      // A cased letter that equals its own uppercase form is upper-case.
+      if (ch === up) upper++;
+    }
+  }
+  if (cased === 0) return false;
+  if (alpha * 2 < trimmed.replace(/\s+/g, "").length) return false;
+
+  // Every cased letter must be uppercase.
+  if (upper !== cased) return false;
+
+  // Guardrail: a lone acronym-ish single word (e.g. "HTTP", "PDF") is too weak
+  // a signal on its own; require either ≥2 words or a longer single token so a
+  // stray uppercase term doesn't become a heading.
+  if (words.length === 1 && trimmed.length < 5) return false;
+
+  return true;
 }
 
 function renderLine(
@@ -225,7 +457,16 @@ function pageToMarkdown(layout: PageTextLayout): string {
     ),
   ].sort((a, b) => b - a);
 
-  const columns = detectColumns(items).sort((a, b) => a.minX - b.minX);
+  // All-caps fallback heading level = one below the deepest font-size-derived
+  // heading. If the page has no larger-than-body sizes, the deepest is treated
+  // as 0 so an isolated all-caps line becomes a level-1 heading. Capped at 6.
+  const deepestFontHeading = Math.min(headingSizes.length, 3);
+  const allCapsLevel = Math.min(deepestFontHeading + 1, 6);
+
+  // detectColumns already returns columns/bands in final reading order
+  // (title → left → right → footer); do NOT re-sort by minX, which would
+  // interleave full-width bands back into the column flow.
+  const columns = detectColumns(items);
 
   const blocks: string[] = [];
 
@@ -242,6 +483,12 @@ function pageToMarkdown(layout: PageTextLayout): string {
 
     let paragraph: string[] = [];
     let prevWasList = false;
+    // Index into `blocks` of the most recent list item emitted in this column,
+    // its indent level (left edge), and the x where its TEXT (not the marker)
+    // begins. A following continuation line is appended to it (change 3).
+    let lastListBlockIdx = -1;
+    let lastListLevelX = 0;
+    let lastListTextStartX = 0;
 
     const flushParagraph = (): void => {
       if (paragraph.length === 0) return;
@@ -251,24 +498,72 @@ function pageToMarkdown(layout: PageTextLayout): string {
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const level = headingLevelFor(line.fontSize, bodySize, headingSizes);
-      const { md, isList } = renderLine(line, level);
+      let level = headingLevelFor(line.fontSize, bodySize, headingSizes);
 
       const gapAbove = i > 0 ? lines[i - 1].y - line.y : 0;
       const bigGap =
         i > 0 && medianGap > 0 && gapAbove > medianGap * PARAGRAPH_GAP_RATIO;
+
+      // Same-size tie-breaker: a body-size line that is isolated by a big
+      // vertical gap and reads like an all-caps label is promoted to a heading
+      // one level below the deepest font-size-derived heading. Font size stays
+      // the primary signal — this only fires when font size alone said "body".
+      if (level === 0 && bigGap && isAllCapsHeading(line.text)) {
+        level = allCapsLevel;
+      }
+
+      const { md, isList } = renderLine(line, level);
+
+      // Marker width estimate so we know where the list item's TEXT starts.
+      const markerMatch =
+        BULLET_RE.exec(line.text) ?? NUMBERED_RE.exec(line.text);
+      const textStartX = markerMatch
+        ? line.x + markerMatch[0].length * line.fontSize * 0.5
+        : line.x;
 
       if (level > 0) {
         // Headings are always their own block.
         flushParagraph();
         blocks.push(md);
         prevWasList = false;
+        lastListBlockIdx = -1;
         continue;
       }
 
       if (isList) {
         flushParagraph();
         blocks.push(md);
+        prevWasList = true;
+        lastListBlockIdx = blocks.length - 1;
+        lastListLevelX = line.x;
+        lastListTextStartX = textStartX;
+        continue;
+      }
+
+      // Wrapped list-item continuation (change 3): a non-list, body-size line
+      // with no big vertical gap, on the same flat level (not dedented left of
+      // the marker), whose left edge is at or past the previous item's
+      // text-start (minus half a glyph of slack) is the second visual line of
+      // that list item — append it rather than emit a stray paragraph.
+      // Conservative gate: requires an immediately preceding list item, no
+      // intervening paragraph, and the continuation must align with the item's
+      // text (not be more deeply indented — we do NOT model nested lists).
+      const sameFlatLevel = line.x >= lastListLevelX - line.fontSize * 0.5;
+      const alignsWithText =
+        line.x >= lastListTextStartX - line.fontSize * 0.5 &&
+        line.x <= lastListTextStartX + line.fontSize * 1.5;
+      if (
+        lastListBlockIdx >= 0 &&
+        prevWasList &&
+        !bigGap &&
+        paragraph.length === 0 &&
+        sameFlatLevel &&
+        alignsWithText
+      ) {
+        blocks[lastListBlockIdx] = `${blocks[lastListBlockIdx]} ${md}`.replace(
+          /\s+/g,
+          " ",
+        );
         prevWasList = true;
         continue;
       }
@@ -278,6 +573,7 @@ function pageToMarkdown(layout: PageTextLayout): string {
       }
       paragraph.push(md);
       prevWasList = false;
+      lastListBlockIdx = -1;
     }
     flushParagraph();
   }
