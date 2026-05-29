@@ -266,7 +266,7 @@ Most of these are inherent to the underlying libraries and cannot be worked arou
 
 5. **`save()` does minimal compression** — pdf-lib's PDF serialization does not apply advanced compression (object streams, cross-reference compression). Output files may be larger than input. Meaningful compression requires external tools.
 
-6. **Text extraction returns PDF stream order, not visual reading order** — `unpdf` (pdf.js) extracts text in content-stream order, which may differ from the visual left-to-right, top-to-bottom reading order. `pdf_to_markdown` reconstructs columns and reading order from positional text and is the better choice when order matters; raw `pdf_extract_text` may interleave multi-column layouts.
+6. **Text extraction returns PDF stream order, not visual reading order** — `unpdf` (pdf.js) extracts text in content-stream order, which may differ from the visual left-to-right, top-to-bottom reading order. `pdf_to_markdown` reconstructs reading order from positional text and is the better choice when order matters; raw `pdf_extract_text` may interleave multi-column layouts. Column scope: `pdf_to_markdown` reconstructs up to 2 content columns (plus full-width title/footer bands); pages with 3 or more columns fall back to single-column reading order.
 
 7. **Encryption is AES-256, opaque to the toolkit** — `pdf_encrypt` uses AES-256 via `@neslinesli93/qpdf-wasm`. The other tools read/write unencrypted PDFs; an already-encrypted input surfaces an `ENCRYPTED_PDF` error rather than being silently mishandled.
 

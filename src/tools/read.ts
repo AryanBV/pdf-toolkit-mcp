@@ -244,7 +244,7 @@ export function registerReadTools(server: McpServer): void {
     "pdf_to_markdown",
     {
       description:
-        "Convert a PDF to clean, reading-order Markdown for LLM consumption: reconstructs columns, infers headings from font size, and detects bullet/numbered lists. Tables are emitted as plain reading-order text, NOT reconstructed as Markdown tables. Best on clean, digital (text-based) PDFs; degrades on scanned/image-only PDFs (use pdf_render_pages for those) and very complex layouts. Returns the first 10 pages by default.",
+        "Convert a PDF to clean, reading-order Markdown for LLM consumption: reconstructs up to 2 content columns (plus full-width title/footer bands), infers headings from font size, and detects bullet/numbered lists. Pages with 3 or more columns fall back to single-column reading order. Tables are emitted as plain reading-order text, NOT reconstructed as Markdown tables. Best on clean, digital (text-based) PDFs; degrades on scanned/image-only PDFs (use pdf_render_pages for those) and very complex layouts. Returns the first 10 pages by default.",
       inputSchema: z
         .object({
           filePath: z

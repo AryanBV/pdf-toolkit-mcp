@@ -218,7 +218,7 @@ Or write image files to disk (default 150 DPI, first 50 pages, PNG):
 
 > "Convert report.pdf to Markdown so I can summarize it"
 
-`pdf_to_markdown` reconstructs reading order from text positions — clustering columns, inferring headings from font size, and detecting lists. Best on clean digital PDFs (use `pdf_render_pages` for scans). Returns the first 10 pages by default.
+`pdf_to_markdown` reconstructs reading order from text positions — clustering up to 2 content columns (plus full-width title/footer bands), inferring headings from font size, and detecting lists. Pages with 3 or more columns fall back to single-column reading order. Best on clean digital PDFs (use `pdf_render_pages` for scans). Returns the first 10 pages by default.
 
 ```json
 { "tool": "pdf_to_markdown", "filePath": "/path/to/report.pdf", "pages": "1-5" }
@@ -348,7 +348,7 @@ Just ask naturally:
 - **Text extraction**: Returns PDF stream order, not visual reading order. Use `pdf_to_markdown` when reading order matters; raw `pdf_extract_text` may interleave multi-column layouts.
 - **Extract text / to Markdown**: Default to the first 10 pages to avoid exceeding LLM context. Request specific pages for longer documents.
 - **Markdown to PDF**: Supports CommonMark + GFM (headings, bold/italic, links, lists, tables, fenced code, blockquotes, rules). Raw HTML, GFM task-list checkbox state, footnotes, and code syntax highlighting are not supported.
-- **PDF to Markdown**: Best on clean digital PDFs; scanned/image-only or very complex layouts degrade — render those with `pdf_render_pages`. Tabular content is emitted as positioned text in reading order, not reconstructed as Markdown tables (table-structure recovery is out of scope).
+- **PDF to Markdown**: Reconstructs up to 2 content columns (plus full-width title/footer bands); pages with 3 or more columns fall back to single-column reading order. Best on clean digital PDFs; scanned/image-only or very complex layouts degrade — render those with `pdf_render_pages`. Tabular content is emitted as positioned text in reading order, not reconstructed as Markdown tables (table-structure recovery is out of scope).
 - **Compare**: Text-only diff; purely visual/layout changes that don't alter text are not detected.
 - **Image embedding**: Only JPEG and PNG formats are supported. Placements that fall off the page are rejected with a coded error rather than silently clipped — choose coordinates and a size that fit within the page bounds.
 - **Form filling**: The built-in fonts are Latin-only (WinAnsi). For non-Latin text (Arabic, CJK, Devanagari, etc.), pass a custom font file (.ttf/.otf) via `fontPath` — it is embedded and applied to the filled field appearances so the glyphs render correctly.

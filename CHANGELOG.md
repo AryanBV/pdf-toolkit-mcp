@@ -13,6 +13,15 @@ prompts, a templates resource). Positioned as an honest incremental step: the
 public API still has heuristic tools and a v1.1 roadmap, so `1.0.0` is reserved
 for a later stable-API milestone.
 
+### ⚠️ BREAKING
+
+- **`pdf_create_from_markdown` `pageSize` values are now title-case** — changed
+  from all-caps (`LETTER`, `LEGAL`) to title-case (`Letter`, `Legal`) for
+  consistency with `pdf_create` (which was already title-case). Because the input
+  schema is `.strict()`, callers passing `pageSize:"LETTER"` or
+  `pageSize:"LEGAL"` must switch to `"Letter"` or `"Legal"`. `A4` is unchanged,
+  and `pdf_create_from_template` has no `pageSize` parameter.
+
 ### Added
 
 - **New tool `pdf_render_pages`** — render PDF pages to PNG/JPEG image files
@@ -166,7 +175,11 @@ A round of surgical correctness fixes on top of the changes above:
   page-wrap instead of overflowing the page.
 - **`pageSize`/`limit` unification** — `pdf_create` and `pdf_create_from_markdown`
   share the same title-case `A4`/`Letter`/`Legal` option (default A4) and
-  consistent page/limit handling.
+  consistent page/limit handling. **Breaking:** `pdf_create_from_markdown`'s
+  `pageSize` values changed from all-caps (`LETTER`, `LEGAL`) to title-case
+  (`Letter`, `Legal`) for consistency with `pdf_create`. Because the schema is
+  `.strict()`, callers passing `pageSize:"LETTER"` or `pageSize:"LEGAL"` must
+  update to `"Letter"` or `"Legal"` (`A4` is unchanged).
 - **PNG size reduction** — `pdf_render_pages` emits opaque RGB PNGs (dropping the
   constant alpha plane) for smaller image files and base64 inline blocks.
 - **GFM table column sizing & alignment** — `pdf_create_from_markdown` sizes table
