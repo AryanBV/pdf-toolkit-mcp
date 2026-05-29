@@ -57,6 +57,7 @@ export interface FormField {
     | "text"
     | "checkbox"
     | "dropdown"
+    | "listbox"
     | "radiogroup"
     | "button"
     | "signature";

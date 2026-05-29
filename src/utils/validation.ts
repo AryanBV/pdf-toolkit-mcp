@@ -126,16 +126,30 @@ export async function validateImagePath(filePath: string): Promise<string> {
   return resolved;
 }
 
+/** Describes the file being size-checked so the error advice fits the asset. */
+export interface FileSizeAsset {
+  /** Human label for the file kind, e.g. "Font file". Defaults to "File". */
+  label?: string;
+  /** Whether "split it first" is sensible advice. PDFs: true; fonts/images: false. */
+  splittable?: boolean;
+}
+
 export async function validateFileSize(
   filePath: string,
   maxMb: number = MAX_FILE_SIZE_MB,
+  asset: FileSizeAsset = {},
 ): Promise<void> {
   const stats = await stat(filePath);
   const sizeMb = stats.size / (1024 * 1024);
 
   if (sizeMb > maxMb) {
+    const label = asset.label ?? "File";
+    const advice =
+      asset.splittable === false
+        ? "Use a smaller file."
+        : "Use a smaller file or split it first.";
     throw new PdfError(
-      `File too large: ${sizeMb.toFixed(1)} MB (limit: ${maxMb} MB). Use a smaller file or split it first.`,
+      `${label} too large: ${sizeMb.toFixed(1)} MB (limit: ${maxMb} MB). ${advice}`,
       "RESOURCE_LIMIT",
     );
   }
@@ -143,6 +157,46 @@ export async function validateFileSize(
 
 export function toUint8Array(buffer: Buffer): Uint8Array {
   return new Uint8Array(buffer);
+}
+
+/**
+ * Parse and validate a single page token (e.g. "3"), returning the 1-based
+ * page number. Shared by parsePageRange and pdf_reorder_pages so both surface
+ * the same codes: malformed syntax -> INVALID_INPUT, a page past the document
+ * end -> PAGE_OUT_OF_RANGE.
+ */
+export function parseSinglePage(segment: string, totalPages: number): number {
+  if (!/^\d+$/.test(segment)) {
+    throw new PdfError(
+      `Invalid page number: "${segment}". Pages must be integers.`,
+      "INVALID_INPUT",
+    );
+  }
+
+  const page = Number.parseInt(segment, 10);
+
+  if (page < 1) {
+    throw new PdfError(
+      `Page numbers must be at least 1, got ${page}.`,
+      "INVALID_INPUT",
+    );
+  }
+
+  if (page > MAX_PAGE_NUMBER) {
+    throw new PdfError(
+      `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`,
+      "INVALID_INPUT",
+    );
+  }
+
+  if (page > totalPages) {
+    throw new PdfError(
+      `Page ${page} exceeds document length (${totalPages} pages).`,
+      "PAGE_OUT_OF_RANGE",
+    );
+  }
+
+  return page;
 }
 
 export function parsePageRange(
@@ -199,39 +253,9 @@ export function parsePageRange(
         pages.add(i - 1);
       }
     } else {
-      // Strictly reject non-digit single segments ("abc", "3.5", "3abc",
-      // empty string from "1,,3") before parsing.
-      if (!/^\d+$/.test(segment)) {
-        throw new PdfError(
-          `Invalid page number: "${segment}". Pages must be integers.`,
-          "INVALID_INPUT",
-        );
-      }
-
-      const page = Number.parseInt(segment, 10);
-
-      if (page < 1) {
-        throw new PdfError(
-          `Page numbers must be at least 1, got ${page}.`,
-          "INVALID_INPUT",
-        );
-      }
-
-      if (page > MAX_PAGE_NUMBER) {
-        throw new PdfError(
-          `Page number exceeds maximum (${MAX_PAGE_NUMBER.toLocaleString()}).`,
-          "INVALID_INPUT",
-        );
-      }
-
-      if (page > totalPages) {
-        throw new PdfError(
-          `Page ${page} exceeds document length (${totalPages} pages).`,
-          "PAGE_OUT_OF_RANGE",
-        );
-      }
-
-      pages.add(page - 1);
+      // Single page token ("abc", "3.5", "3abc", "" from "1,,3" all rejected
+      // inside parseSinglePage — shared with pdf_reorder_pages).
+      pages.add(parseSinglePage(segment, totalPages) - 1);
     }
   }
 

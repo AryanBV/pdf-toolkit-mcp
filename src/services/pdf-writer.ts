@@ -10,19 +10,17 @@ export async function loadExistingPdf(filePath: string): Promise<PDFDocument> {
   try {
     return await pdfLib.PDFDocument.load(data);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // pdf-lib throws EncryptedPDFError (name) for encrypted documents and a
-    // message mentioning encryption. Surface a stable ENCRYPTED_PDF code so
-    // callers can branch on it; any other parse failure is CORRUPT_PDF.
-    const isEncrypted =
-      (err instanceof Error && err.name === "EncryptedPDFError") ||
-      /encrypt/i.test(message);
-    if (isEncrypted) {
+    // pdf-lib throws a typed EncryptedPDFError for encrypted documents; any
+    // other parse failure is genuinely corrupt. Match on the class (not a
+    // message substring) so a corrupt PDF whose error text merely mentions
+    // "encrypt" is not mislabeled ENCRYPTED_PDF.
+    if (err instanceof pdfLib.EncryptedPDFError) {
       throw new PdfError(
         `PDF is encrypted: ${filePath}. Decrypt it before processing.`,
         "ENCRYPTED_PDF",
       );
     }
+    const message = err instanceof Error ? err.message : String(err);
     throw new PdfError(
       `Failed to parse PDF — the file may be corrupt or not a valid PDF: ${message}`,
       "CORRUPT_PDF",

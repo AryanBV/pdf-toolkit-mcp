@@ -78,7 +78,7 @@ export function registerReadTools(server: McpServer): void {
           pages: result.pages,
         };
 
-        if (result.pages.length < totalPages) {
+        if (!pages && result.pages.length < totalPages) {
           response.note = `Showing pages ${extractedLabel} of ${totalPages}. Request specific pages for more.`;
         }
 
@@ -193,6 +193,9 @@ export function registerReadTools(server: McpServer): void {
             } else if (field instanceof pdfLib.PDFSignature) {
               type = "signature";
               value = "";
+            } else if (field instanceof pdfLib.PDFOptionList) {
+              type = "listbox";
+              value = field.getSelected().join(", ");
             } else {
               type = "text";
               value = "";

@@ -84,6 +84,22 @@ async function makeFormPdf(): Promise<Uint8Array> {
   dd.select("green");
   dd.addToPage(page, { x: 20, y: 240, width: 120, height: 20 });
 
+  // A radio group with one option selected — surfaced as type "radiogroup".
+  const rg = form.createRadioGroup("size");
+  rg.addOptionToPage("S", page, { x: 20, y: 200, width: 15, height: 15 });
+  rg.addOptionToPage("M", page, { x: 50, y: 200, width: 15, height: 15 });
+  rg.select("M");
+
+  // A push button — surfaced as type "button" with an empty value.
+  const btn = form.createButton("submit");
+  btn.addToPage("Submit", page, { x: 20, y: 160, width: 60, height: 20 });
+
+  // A multi-select option list (listbox).
+  const ol = form.createOptionList("topics");
+  ol.addOptions(["alpha", "beta", "gamma"]);
+  ol.select("beta");
+  ol.addToPage(page, { x: 20, y: 100, width: 120, height: 50 });
+
   form.updateFieldAppearances();
   return doc.save();
 }
@@ -629,7 +645,7 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
     expect(result.isError).toBeFalsy();
     const payload = JSON.parse(textOf(result));
     expect(payload.hasForm).toBe(true);
-    expect(payload.fieldCount).toBe(3);
+    expect(payload.fieldCount).toBe(6);
 
     const byName = new Map<string, { type: string; value: unknown }>(
       payload.fields.map(
@@ -645,6 +661,15 @@ describe("read tools (pdf_to_markdown, pdf_search, metadata polish)", () => {
     expect(byName.get("agree")?.value).toBe(true);
     expect(byName.get("color")?.type).toBe("dropdown");
     expect(byName.get("color")?.value).toBe("green");
+    // Radio group reports its selected option.
+    expect(byName.get("size")?.type).toBe("radiogroup");
+    expect(byName.get("size")?.value).toBe("M");
+    // Push button reports as a button with no value.
+    expect(byName.get("submit")?.type).toBe("button");
+    expect(byName.get("submit")?.value).toBe("");
+    // Multi-select option list reports as a listbox with its selection.
+    expect(byName.get("topics")?.type).toBe("listbox");
+    expect(byName.get("topics")?.value).toBe("beta");
   }, 30_000);
 
   it("surfaces CORRUPT_PDF for a broken AcroForm instead of swallowing it", async () => {
