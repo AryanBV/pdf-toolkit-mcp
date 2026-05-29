@@ -50,21 +50,30 @@ export function toErrorResult(err: unknown): ToolResult {
 }
 
 export function toolSuccess(data: unknown): ToolResult {
-  const text =
-    typeof data === "string" ? data : (JSON.stringify(data, null, 2) ?? "");
+  // Plain strings are returned as-is and byte-sliced on overflow (not JSON).
+  if (typeof data === "string") {
+    const text =
+      data.length > CHARACTER_LIMIT
+        ? data.slice(0, CHARACTER_LIMIT) +
+          `\n\n[Output truncated at ${CHARACTER_LIMIT.toLocaleString()} characters. Use page ranges to extract smaller sections.]`
+        : data;
+    return { content: [{ type: "text", text }] };
+  }
 
-  if (text.length > CHARACTER_LIMIT) {
+  // Object payloads are serialized to JSON. On overflow, return a VALID JSON
+  // envelope (preview is an escaped string value) so the client's JSON.parse
+  // never sees a token sliced in half.
+  const serialized = JSON.stringify(data, null, 2) ?? "";
+  if (serialized.length > CHARACTER_LIMIT) {
+    const envelope = {
+      truncated: true,
+      note: "Output exceeded 25,000 characters; request a smaller page range or fewer items.",
+      preview: serialized.slice(0, CHARACTER_LIMIT - 400),
+    };
     return {
-      content: [
-        {
-          type: "text",
-          text:
-            text.slice(0, CHARACTER_LIMIT) +
-            `\n\n[Output truncated at ${CHARACTER_LIMIT.toLocaleString()} characters. Use page ranges to extract smaller sections.]`,
-        },
-      ],
+      content: [{ type: "text", text: JSON.stringify(envelope, null, 2) }],
     };
   }
 
-  return { content: [{ type: "text", text }] };
+  return { content: [{ type: "text", text: serialized }] };
 }
