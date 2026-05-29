@@ -23,18 +23,12 @@ import {
   parsePageRange,
   toUint8Array,
 } from "../utils/validation.js";
-import {
-  PdfError,
-  toolError,
-  toolSuccess,
-  toErrorResult,
-} from "../utils/errors.js";
+import { PdfError, toolSuccess, toErrorResult } from "../utils/errors.js";
 import { getFileSize } from "../utils/file-utils.js";
 import { createFromMarkdown, renderTemplate } from "../services/pdf-creator.js";
 import { templateRegistry } from "../templates/index.js";
-import type { TemplateName } from "../types.js";
 import { writeFile } from "node:fs/promises";
-import { MAX_IMAGE_DIMENSION, MAX_MARKDOWN_INPUT_CHARS } from "../constants.js";
+import { MAX_IMAGE_DIMENSION, MAX_TEXT_INPUT_CHARS } from "../constants.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -63,18 +57,25 @@ function wrapText(
       if (testWidth <= maxWidth) {
         currentLine = testLine;
       } else if (currentLine === "") {
-        // Single word exceeds maxWidth — break mid-word
+        // Single word exceeds maxWidth — break mid-word. Keep a running width
+        // and add each glyph's advance once instead of re-measuring the whole
+        // growing prefix every iteration (avoids O(n^2) on a single unbroken
+        // token up to the input cap). Note: summing per-glyph advances ignores
+        // pairwise kerning (standard fonts kern too), so these mid-word break
+        // points are approximate and kerning-free — they slightly over-estimate
+        // width (so a line never overflows the page) and may break a few
+        // characters earlier than a kerning-aware whole-prefix measurement.
         let partial = "";
+        let partialWidth = 0;
         for (const char of word) {
-          const testPartial = partial + char;
-          if (
-            font.widthOfTextAtSize(testPartial, fontSize) > maxWidth &&
-            partial
-          ) {
+          const charWidth = font.widthOfTextAtSize(char, fontSize);
+          if (partialWidth + charWidth > maxWidth && partial) {
             lines.push(partial);
             partial = char;
+            partialWidth = charWidth;
           } else {
-            partial = testPartial;
+            partial += char;
+            partialWidth += charWidth;
           }
         }
         currentLine = partial;
@@ -122,7 +123,7 @@ export function registerCreateTools(server: McpServer): void {
           content: z
             .string()
             .min(1)
-            .max(10_000_000)
+            .max(MAX_TEXT_INPUT_CHARS)
             .describe("Text content for the PDF. Use \\n for line breaks."),
           title: z
             .string()
@@ -223,9 +224,16 @@ export function registerCreateTools(server: McpServer): void {
           font = await pdfDoc.embedFont(pdfLib.StandardFonts.Helvetica);
         }
 
-        const maxWidth = pageWidth - 2 * marg;
+        const usableWidth = pageWidth - 2 * marg;
+        const usableHeight = pageHeight - 2 * marg;
+        if (usableWidth < fSize || usableHeight < fSize) {
+          throw new PdfError(
+            `The usable area (${usableWidth.toFixed(0)}x${usableHeight.toFixed(0)} points) is too small for a margin of ${marg} and font size of ${fSize} on a ${size} page. Reduce the margin or font size so the usable area is at least the font size on each axis.`,
+            "INVALID_INPUT",
+          );
+        }
 
-        const wrappedLines = wrapText(textContent, font, fSize, maxWidth);
+        const wrappedLines = wrapText(textContent, font, fSize, usableWidth);
 
         let page = pdfDoc.addPage([pageWidth, pageHeight]);
         let currentY = pageHeight - marg;
@@ -269,7 +277,7 @@ export function registerCreateTools(server: McpServer): void {
     "pdf_fill_form",
     {
       description:
-        "Fill form fields in a PDF. Supports text, checkbox, dropdown, and radio fields. Provide fontPath for non-Latin text (Arabic, CJK, etc.).",
+        "Fill form fields in a PDF. Supports text, checkbox, dropdown, radio, and list-box (multi-select) fields. Provide fontPath for non-Latin text (Arabic, CJK, etc.).",
       inputSchema: z
         .object({
           filePath: z
@@ -311,7 +319,17 @@ export function registerCreateTools(server: McpServer): void {
       try {
         const BLOCKED_KEYS = ["__proto__", "constructor", "prototype"];
         if (Object.keys(fields).some((k) => BLOCKED_KEYS.includes(k))) {
-          return toolError("Input contains prohibited key names.");
+          throw new PdfError(
+            "Input contains prohibited key names.",
+            "INVALID_INPUT",
+          );
+        }
+
+        if (Object.keys(fields).length === 0) {
+          throw new PdfError(
+            "No fields provided. Pass an object mapping at least one field name to a value.",
+            "INVALID_INPUT",
+          );
         }
 
         const resolvedPath = await validatePdfPath(filePath);
@@ -325,15 +343,17 @@ export function registerCreateTools(server: McpServer): void {
           form = pdfDoc.getForm();
           form.deleteXFA();
         } catch {
-          return toolError(
-            "This PDF does not contain any form fields. Use pdf_get_form_fields to inspect a PDF's form structure.",
+          throw new PdfError(
+            "This PDF's form could not be read; it may be corrupt or use an unsupported form structure. Use pdf_get_form_fields to inspect it.",
+            "CORRUPT_PDF",
           );
         }
 
         const allFields = form.getFields();
         if (allFields.length === 0) {
-          return toolError(
+          throw new PdfError(
             "This PDF does not contain any form fields. Use pdf_get_form_fields to inspect a PDF's form structure.",
+            "INVALID_INPUT",
           );
         }
 
@@ -345,8 +365,9 @@ export function registerCreateTools(server: McpServer): void {
                 (ch) => ch.charCodeAt(0) > 255,
               );
               if (hasNonLatin) {
-                return toolError(
-                  `Non-Latin characters detected in field '${name}'. Provide a fontPath parameter pointing to a .ttf/.otf font file that supports these characters.`,
+                throw new PdfError(
+                  `Non-Latin characters detected in field '${name}'. The built-in font supports Latin (WinAnsi) only — provide a fontPath pointing to a .ttf/.otf font file that supports these characters.`,
+                  "UNSUPPORTED_FORMAT",
                 );
               }
             }
@@ -408,16 +429,35 @@ export function registerCreateTools(server: McpServer): void {
               rebuildAppearances.push(() => f.updateAppearances(customFont));
             }
           } else if (field instanceof pdfLib.PDFRadioGroup) {
-            field.select(String(value));
+            // select() throws on a value not in the group's option set. Surface
+            // a clean error listing the valid choices.
+            try {
+              field.select(String(value));
+            } catch {
+              throw new PdfError(
+                `Invalid value '${String(value)}' for radio field '${name}'. Valid options: ${field.getOptions().join(", ")}.`,
+                "INVALID_INPUT",
+              );
+            }
           } else if (field instanceof pdfLib.PDFOptionList) {
-            field.select(String(value));
+            // select() throws on a value not in the list's option set. Surface
+            // a clean error listing the valid choices.
+            try {
+              field.select(String(value));
+            } catch {
+              throw new PdfError(
+                `Invalid value '${String(value)}' for option-list field '${name}'. Valid options: ${field.getOptions().join(", ")}.`,
+                "INVALID_INPUT",
+              );
+            }
             if (customFont) {
               const f: PdfLibOptionList = field;
               rebuildAppearances.push(() => f.updateAppearances(customFont));
             }
           } else {
-            return toolError(
+            throw new PdfError(
               `Field '${name}' is of unsupported type for filling. Supported types: text, checkbox, dropdown, radio.`,
+              "UNSUPPORTED_FORMAT",
             );
           }
 
@@ -542,9 +582,26 @@ export function registerCreateTools(server: McpServer): void {
         await validateFileSize(resolvedPath);
         const resolvedOutput = await validateOutputPath(outputPath, filePath);
 
+        // The built-in Helvetica is WinAnsi (Latin) only. Reject non-Latin text
+        // up front with a clear, coded error rather than letting pdf-lib throw a
+        // cryptic encoding failure inside drawText. This tool has no fontPath
+        // option, so a custom font is not an available workaround here.
+        if ([...text].some((ch) => ch.charCodeAt(0) > 255)) {
+          throw new PdfError(
+            "Watermark text contains non-Latin characters. The built-in watermark font supports Latin (WinAnsi) only.",
+            "UNSUPPORTED_FORMAT",
+          );
+        }
+
         const pdfDoc = await loadExistingPdf(resolvedPath);
         const font = await pdfDoc.embedFont(pdfLib.StandardFonts.Helvetica);
         const totalPages = pdfDoc.getPageCount();
+        if (totalPages === 0) {
+          throw new PdfError(
+            "The PDF has no pages; nothing to watermark.",
+            "INVALID_INPUT",
+          );
+        }
 
         const fSize = fontSize ?? 50;
         const opac = opacity ?? 0.3;
@@ -637,12 +694,14 @@ export function registerCreateTools(server: McpServer): void {
             .describe("Y position in points from the bottom edge of the page"),
           width: z
             .number()
+            .positive()
             .optional()
             .describe(
               "Image width in points. Omit to use original width (or scale proportionally if height is set).",
             ),
           height: z
             .number()
+            .positive()
             .optional()
             .describe(
               "Image height in points. Omit to use original height (or scale proportionally if width is set).",
@@ -732,6 +791,13 @@ export function registerCreateTools(server: McpServer): void {
           drawHeight = image.height;
         }
 
+        if (drawWidth <= 0 || drawHeight <= 0) {
+          throw new PdfError(
+            `Computed draw dimensions ${drawWidth.toFixed(0)}x${drawHeight.toFixed(0)} points are not positive. Provide positive width/height (or omit both to use the image's native size).`,
+            "INVALID_INPUT",
+          );
+        }
+
         const targetPage = pdfDoc.getPage(page - 1);
 
         // Bounds check: the image is placed with its bottom-left corner at
@@ -784,14 +850,14 @@ export function registerCreateTools(server: McpServer): void {
           markdown: z
             .string()
             .min(1)
-            .max(10_000_000)
+            .max(MAX_TEXT_INPUT_CHARS)
             .describe("Markdown content to render as PDF"),
           outputPath: z
             .string()
             .max(4096)
             .describe("Absolute path for the output PDF file"),
           pageSize: z
-            .enum(["A4", "LETTER", "LEGAL"])
+            .enum(["A4", "Letter", "Legal"])
             .optional()
             .describe("Page size. Defaults to A4."),
           title: z
@@ -815,17 +881,22 @@ export function registerCreateTools(server: McpServer): void {
     },
     async ({ markdown, outputPath, pageSize, title, author }) => {
       try {
-        if (markdown.length > MAX_MARKDOWN_INPUT_CHARS) {
-          throw new PdfError(
-            "Markdown input exceeds the maximum size.",
-            "RESOURCE_LIMIT",
-          );
-        }
-
+        // Size is enforced by the schema's .max(MAX_TEXT_INPUT_CHARS) on the
+        // `markdown` field, which rejects oversize input before this handler
+        // runs — no redundant runtime guard needed.
         const resolvedOutput = await validateOutputPath(outputPath);
 
+        // The schema accepts title-case sizes for consistency with pdf_create;
+        // react-pdf's pageSize union is uppercase, so map across.
+        const REACT_PDF_PAGE_SIZE = {
+          A4: "A4",
+          Letter: "LETTER",
+          Legal: "LEGAL",
+        } as const;
+        const size = pageSize ?? "A4";
+
         const bytes = await createFromMarkdown(markdown, {
-          pageSize: pageSize ?? "A4",
+          pageSize: REACT_PDF_PAGE_SIZE[size],
           title,
           author,
         });
@@ -837,7 +908,7 @@ export function registerCreateTools(server: McpServer): void {
         return toolSuccess({
           outputPath: resolvedOutput,
           pageCount: pdfDoc.getPageCount(),
-          pageSize: pageSize ?? "A4",
+          pageSize: size,
           fileSize,
         });
       } catch (error) {
@@ -871,7 +942,9 @@ export function registerCreateTools(server: McpServer): void {
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        // visible date defaults to the current date when omitted, so output is
+        // not byte-identical across calls
+        idempotentHint: false,
         openWorldHint: false,
       },
     },
@@ -879,17 +952,17 @@ export function registerCreateTools(server: McpServer): void {
       try {
         const BLOCKED_KEYS = ["__proto__", "constructor", "prototype"];
         if (Object.keys(data).some((k) => BLOCKED_KEYS.includes(k))) {
-          return toolError("Input contains prohibited key names.");
+          throw new PdfError(
+            "Input contains prohibited key names.",
+            "INVALID_INPUT",
+          );
         }
 
         const resolvedOutput = await validateOutputPath(outputPath);
 
-        const entry = templateRegistry[templateName as TemplateName];
-        if (!entry) {
-          return toolError(
-            `Unknown template: ${templateName}. Available templates: invoice, report, letter.`,
-          );
-        }
+        // The Zod enum on `templateName` already rejects unknown names, so the
+        // registry lookup always resolves.
+        const entry = templateRegistry[templateName];
 
         const parsed = entry.schema.safeParse(data);
         if (!parsed.success) {
@@ -960,20 +1033,31 @@ export function registerCreateTools(server: McpServer): void {
         const pdfDoc = await loadExistingPdf(resolvedPath);
 
         let fieldCount = 0;
+        let flattened = false;
         let note =
-          "Flattened form fields; the document is now non-interactive.";
+          "PDF has no form fields; output is a copy of the input (nothing to flatten).";
         try {
           const form = pdfDoc.getForm();
           fieldCount = form.getFields().length;
           if (fieldCount > 0) {
             form.flatten();
-          } else {
+            flattened = true;
             note =
-              "PDF has no form fields; output is a copy of the input (nothing to flatten).";
+              "Flattened form fields; the document is now non-interactive.";
           }
-        } catch {
-          note =
-            "PDF has no form fields; output is a copy of the input (nothing to flatten).";
+        } catch (e) {
+          // A genuinely form-less PDF surfaces here with fieldCount === 0; keep
+          // the lenient copy path. But if fields were counted, flatten() itself
+          // failed (corrupt/odd appearance streams) — never claim success when
+          // the saved file would still carry interactive fields.
+          if (fieldCount > 0) {
+            throw new PdfError(
+              `Failed to flatten ${fieldCount} form field(s): ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+              "INTERNAL",
+            );
+          }
         }
 
         await savePdf(pdfDoc, resolvedOutput);
@@ -981,7 +1065,8 @@ export function registerCreateTools(server: McpServer): void {
 
         return toolSuccess({
           outputPath: resolvedOutput,
-          flattenedFields: fieldCount,
+          flattened,
+          flattenedFields: flattened ? fieldCount : 0,
           note,
           fileSize,
         });

@@ -3,8 +3,10 @@ import { z } from "zod";
 import {
   getReactPdf,
   PRODUCER,
+  FIXED_CREATION_DATE,
   type DocumentElement,
 } from "../services/pdf-creator.js";
+import { splitParagraphs } from "./text.js";
 
 const h = React.createElement;
 
@@ -40,7 +42,7 @@ export async function buildLetter(data: LetterData): Promise<DocumentElement> {
   const closing = data.closing ?? "Sincerely";
   const signatureName = data.signatureName ?? senderName;
 
-  const bodyParagraphs = body.split("\n").filter((p) => p.trim() !== "");
+  const bodyParagraphs = splitParagraphs(body);
 
   const styles = StyleSheet.create({
     page: {
@@ -81,6 +83,8 @@ export async function buildLetter(data: LetterData): Promise<DocumentElement> {
       producer: PRODUCER,
       title: subject || `Letter to ${recipientName}`,
       author: senderName || undefined,
+      creationDate: FIXED_CREATION_DATE,
+      modificationDate: FIXED_CREATION_DATE,
     },
     h(
       Page,

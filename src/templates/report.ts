@@ -3,8 +3,10 @@ import { z } from "zod";
 import {
   getReactPdf,
   PRODUCER,
+  FIXED_CREATION_DATE,
   type DocumentElement,
 } from "../services/pdf-creator.js";
+import { splitParagraphs } from "./text.js";
 
 const h = React.createElement;
 
@@ -79,6 +81,9 @@ export async function buildReport(data: ReportData): Promise<DocumentElement> {
       marginBottom: 10,
     },
     sectionBody: { fontSize: 11, lineHeight: 1.5, marginBottom: 16 },
+    // Non-final paragraphs of a multi-paragraph section body: same type style,
+    // a smaller gap between paragraphs than the section's trailing margin.
+    sectionParagraph: { fontSize: 11, lineHeight: 1.5, marginBottom: 8 },
     header: {
       position: "absolute",
       top: 24,
@@ -99,8 +104,28 @@ export async function buildReport(data: ReportData): Promise<DocumentElement> {
     },
   });
 
-  const sectionNodes = sections.map((section, idx) =>
-    h(
+  const sectionNodes = sections.map((section, idx) => {
+    // Render each paragraph of the body as its own Text node. A single
+    // paragraph produces exactly one node with styles.sectionBody — identical
+    // to before. The last paragraph keeps the section's trailing margin.
+    const paragraphs = splitParagraphs(section.body);
+    const bodyNodes =
+      paragraphs.length > 0
+        ? paragraphs.map((paragraph, pIdx) =>
+            h(
+              Text,
+              {
+                key: `sec-${idx}-p-${pIdx}`,
+                style:
+                  pIdx === paragraphs.length - 1
+                    ? styles.sectionBody
+                    : styles.sectionParagraph,
+              },
+              paragraph,
+            ),
+          )
+        : [h(Text, { key: `sec-${idx}-p-0`, style: styles.sectionBody }, "")];
+    return h(
       View,
       { key: `sec-${idx}`, style: idx > 0 ? { marginTop: 8 } : {}, wrap: true },
       h(
@@ -108,9 +133,9 @@ export async function buildReport(data: ReportData): Promise<DocumentElement> {
         { style: styles.sectionHeading },
         `${idx + 1}. ${section.heading}`,
       ),
-      h(Text, { style: styles.sectionBody }, section.body),
-    ),
-  );
+      ...bodyNodes,
+    );
+  });
 
   const footerRender = (props: {
     pageNumber: number;
@@ -123,6 +148,8 @@ export async function buildReport(data: ReportData): Promise<DocumentElement> {
       producer: PRODUCER,
       title,
       author: author || undefined,
+      creationDate: FIXED_CREATION_DATE,
+      modificationDate: FIXED_CREATION_DATE,
     },
     // Title page
     h(

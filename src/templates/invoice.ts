@@ -3,8 +3,10 @@ import { z } from "zod";
 import {
   getReactPdf,
   PRODUCER,
+  FIXED_CREATION_DATE,
   type DocumentElement,
 } from "../services/pdf-creator.js";
+import { splitParagraphs } from "./text.js";
 
 const h = React.createElement;
 
@@ -235,7 +237,37 @@ export async function buildInvoice(
       marginBottom: 4,
     },
     sectionBody: { fontSize: 10, color: "#666666" },
+    // Non-final paragraphs of a multi-paragraph section: same type style with a
+    // small gap so paragraphs read as distinct blocks.
+    sectionParagraph: { fontSize: 10, color: "#666666", marginBottom: 6 },
   });
+
+  // Render a multi-paragraph body as separate Text nodes. A single-paragraph
+  // body yields exactly one Text with styles.sectionBody — identical to before.
+  const sectionBodyNodes = (
+    text: string,
+    keyPrefix: string,
+  ): React.ReactNode[] => {
+    const paragraphs = splitParagraphs(text);
+    if (paragraphs.length === 0) {
+      return [
+        h(Text, { key: `${keyPrefix}-0`, style: styles.sectionBody }, ""),
+      ];
+    }
+    return paragraphs.map((paragraph, i) =>
+      h(
+        Text,
+        {
+          key: `${keyPrefix}-${i}`,
+          style:
+            i === paragraphs.length - 1
+              ? styles.sectionBody
+              : styles.sectionParagraph,
+        },
+        paragraph,
+      ),
+    );
+  };
 
   const itemRows = items.map((item, i) =>
     h(
@@ -254,6 +286,8 @@ export async function buildInvoice(
       producer: PRODUCER,
       title: `Invoice ${invoiceNumber}`,
       author: companyName,
+      creationDate: FIXED_CREATION_DATE,
+      modificationDate: FIXED_CREATION_DATE,
     },
     h(
       Page,
@@ -336,7 +370,7 @@ export async function buildInvoice(
             View,
             {},
             h(Text, { style: styles.sectionTitle }, "Payment Terms"),
-            h(Text, { style: styles.sectionBody }, paymentTerms),
+            ...sectionBodyNodes(paymentTerms, "terms"),
           )
         : null,
       notes
@@ -344,7 +378,7 @@ export async function buildInvoice(
             View,
             {},
             h(Text, { style: styles.sectionTitle }, "Notes"),
-            h(Text, { style: styles.sectionBody }, notes),
+            ...sectionBodyNodes(notes, "notes"),
           )
         : null,
     ),
