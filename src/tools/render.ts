@@ -86,7 +86,7 @@ export function registerRenderTools(server: McpServer): void {
             .max(4096)
             .optional()
             .describe(
-              "Absolute path to an existing directory for the images. Defaults to the input PDF's directory. Ignored when inline is true.",
+              "Directory for the output images: an absolute path is recommended; a relative path resolves against the server working directory. The directory must already exist. Defaults to the input PDF's directory. Ignored when inline is true.",
             ),
         })
         .strict(),
@@ -109,6 +109,13 @@ export function registerRenderTools(server: McpServer): void {
 
         const pdfBytes = toUint8Array(await readFile(resolvedPath));
         const totalPages = await getPdfPageCount(resolvedPath);
+
+        if (totalPages === 0) {
+          throw new PdfError(
+            "The PDF has no pages; nothing to render.",
+            "INVALID_INPUT",
+          );
+        }
 
         const inlineMode = inline === true;
 

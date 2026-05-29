@@ -87,6 +87,34 @@ describe("pdf_render_pages", () => {
     }
   }, 30_000);
 
+  // RGB-OUT: the emitted PNG must be truecolor (colorType 2) with NO alpha
+  // channel. The renderer drops the constant 0xFF alpha plane from PDFium's RGBA
+  // output; this locks in that colorType:2 change and the opaque-compositing
+  // invariant. We check the IHDR color-type byte directly (robust to encoder
+  // quirks) and confirm the image still decodes to sane dimensions.
+  it("emits truecolor RGB PNGs without an alpha channel", async () => {
+    const result = (await client.callTool({
+      name: "pdf_render_pages",
+      arguments: { filePath: pdfPath, pages: "1", format: "png" },
+    })) as ToolResultLike;
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(textOf(result));
+    expect(payload.images).toHaveLength(1);
+
+    const bytes = await readFile(payload.images[0].path);
+
+    // PNG signature (8 bytes) + IHDR length (4) + "IHDR" (4) + width (4) +
+    // height (4) + bit depth (1) puts the color-type byte at offset 25.
+    // 2 = truecolor RGB (no alpha); 6 would be RGBA.
+    expect(bytes[25]).toBe(2);
+
+    // It must still decode to a valid image of positive dimensions.
+    const decoded = PNG.sync.read(bytes);
+    expect(decoded.width).toBeGreaterThan(0);
+    expect(decoded.height).toBeGreaterThan(0);
+  }, 30_000);
+
   it("renders to JPEG when requested", async () => {
     const result = (await client.callTool({
       name: "pdf_render_pages",

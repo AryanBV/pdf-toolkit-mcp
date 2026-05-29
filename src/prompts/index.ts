@@ -18,27 +18,88 @@ export function registerPrompts(server: McpServer): void {
           .describe(
             'Line items as "description:qty:price" separated by semicolons, e.g. "Web design:1:1500;Hosting:12:29.99"',
           ),
+        currency: z
+          .string()
+          .optional()
+          .describe('Currency ISO code or symbol (e.g. "USD", "EUR", "€")'),
+        tax_rate: z.string().optional().describe("Tax rate percent (0-100)"),
+        due_date: z.string().optional().describe("Due date (e.g. 2026-06-30)"),
+        company_address: z.string().optional().describe("Your company address"),
+        client_address: z.string().optional().describe("Client address"),
+        payment_terms: z
+          .string()
+          .optional()
+          .describe("Payment terms (e.g. Net 30)"),
+        notes: z.string().optional().describe("Additional notes"),
       },
     },
-    async ({ company_name, client_name, invoice_number, items }) => {
+    async ({
+      company_name,
+      client_name,
+      invoice_number,
+      items,
+      currency,
+      tax_rate,
+      due_date,
+      company_address,
+      client_address,
+      payment_terms,
+      notes,
+    }) => {
+      // Forward trimmed raw strings (or undefined when empty) so the optional
+      // string fields keep the template's own defaults when blank.
+      const blankToUndefined = (v: string | undefined): string | undefined => {
+        const trimmed = v?.trim();
+        return trimmed ? trimmed : undefined;
+      };
+
+      // Emit quantity/unitPrice as JSON numbers (the invoice schema accepts
+      // numeric strings, but the structured call reads cleaner as numbers).
+      // A blank or non-numeric quantity/price is omitted (JSON.stringify drops
+      // undefined keys), so the invoice builder's own defaults apply
+      // (quantity=1, unitPrice=0). A real 0 is preserved.
+      const toNumberOrUndefined = (
+        v: string | undefined,
+      ): number | undefined => {
+        const trimmed = v?.trim();
+        if (!trimmed) return undefined;
+        const n = Number(trimmed);
+        return Number.isFinite(n) ? n : undefined;
+      };
+
       const parsedItems = items.split(";").map((entry) => {
         const parts = entry.trim().split(":");
         return {
           description: parts[0]?.trim() ?? "",
-          quantity: Number(parts[1]?.trim()) || 1,
-          unitPrice: Number(parts[2]?.trim()) || 0,
+          quantity: toNumberOrUndefined(parts[1]),
+          unitPrice: toNumberOrUndefined(parts[2]),
         };
       });
 
       const today = new Date().toISOString().slice(0, 10);
 
-      const data = {
+      const data: Record<string, unknown> = {
         companyName: company_name,
         clientName: client_name,
         invoiceNumber: invoice_number,
         invoiceDate: today,
         items: parsedItems,
       };
+
+      // Only set optional fields when supplied so the template's own defaults
+      // still apply otherwise.
+      const optional: Record<string, string | undefined> = {
+        currency: blankToUndefined(currency),
+        taxRate: blankToUndefined(tax_rate),
+        dueDate: blankToUndefined(due_date),
+        companyAddress: blankToUndefined(company_address),
+        clientAddress: blankToUndefined(client_address),
+        paymentTerms: blankToUndefined(payment_terms),
+        notes: blankToUndefined(notes),
+      };
+      for (const [key, value] of Object.entries(optional)) {
+        if (value !== undefined) data[key] = value;
+      }
 
       const text = [
         `Create an invoice PDF using the \`pdf_create_from_template\` tool with these parameters:`,
@@ -81,20 +142,15 @@ export function registerPrompts(server: McpServer): void {
       const text = [
         `Fill the PDF form at \`${pdf_path}\` using this two-step workflow:`,
         "",
-        `**Step 1** — Discover the form fields:`,
+        `**Step 1** — Discover the form fields with the \`pdf_get_form_fields\` tool:`,
         "```json",
-        JSON.stringify(
-          { tool: "pdf_get_form_fields", filePath: pdf_path },
-          null,
-          2,
-        ),
+        JSON.stringify({ filePath: pdf_path }, null, 2),
         "```",
         "",
-        `**Step 2** — Once you know the field names and types, fill them:`,
+        `**Step 2** — Once you know the field names and types, fill them with the \`pdf_fill_form\` tool:`,
         "```json",
         JSON.stringify(
           {
-            tool: "pdf_fill_form",
             filePath: pdf_path,
             fields: { "<field_name>": "<value>" },
             outputPath: "<choose an output path>",
@@ -130,22 +186,14 @@ export function registerPrompts(server: McpServer): void {
       const text = [
         `Read the PDF at \`${pdf_path}\`. Many PDFs are scanned or image-only and contain no extractable text layer, so follow this workflow:`,
         "",
-        `**Step 1** — Try a quick text extraction to detect whether this is a digital PDF:`,
+        `**Step 1** — Try a quick text extraction with the \`pdf_extract_text\` tool to detect whether this is a digital PDF:`,
         "```json",
-        JSON.stringify(
-          { tool: "pdf_extract_text", filePath: pdf_path },
-          null,
-          2,
-        ),
+        JSON.stringify({ filePath: pdf_path }, null, 2),
         "```",
         "",
-        `**Step 2** — If Step 1 returns little or no usable text (a scanned/image PDF), SEE the pages directly by rendering them inline for vision:`,
+        `**Step 2** — If Step 1 returns little or no usable text (a scanned/image PDF), SEE the pages directly by rendering them inline for vision with the \`pdf_render_pages\` tool:`,
         "```json",
-        JSON.stringify(
-          { tool: "pdf_render_pages", filePath: pdf_path, inline: true },
-          null,
-          2,
-        ),
+        JSON.stringify({ filePath: pdf_path, inline: true }, null, 2),
         "```",
         "",
         'Inline rendering returns up to 5 pages as images you can read visually. For longer documents, pass a `pages` range (e.g. "1-5") and render in batches.',
@@ -174,13 +222,9 @@ export function registerPrompts(server: McpServer): void {
       const text = [
         `Convert the PDF at \`${pdf_path}\` to Markdown:`,
         "",
-        `**Step 1** — Convert the document to structured Markdown:`,
+        `**Step 1** — Convert the document to structured Markdown with the \`pdf_to_markdown\` tool:`,
         "```json",
-        JSON.stringify(
-          { tool: "pdf_to_markdown", filePath: pdf_path },
-          null,
-          2,
-        ),
+        JSON.stringify({ filePath: pdf_path }, null, 2),
         "```",
         "",
         "**Step 2** — Optionally, summarize the resulting Markdown or extract the parts the user asked about. Preserve headings, lists, and tables from the conversion.",
@@ -223,11 +267,10 @@ export function registerPrompts(server: McpServer): void {
         JSON.stringify(paths, null, 2),
         "```",
         "",
-        `**Option A (one step)** — Merge and flatten in a single call. \`pdf_merge\` preserves form fields by namespacing them per source document, and \`flatten:true\` bakes them into static content:`,
+        `**Option A (one step)** — Merge and flatten in a single \`pdf_merge\` call. It preserves form fields by namespacing them per source document, and \`flatten:true\` bakes them into static content:`,
         "```json",
         JSON.stringify(
           {
-            tool: "pdf_merge",
             filePaths: paths,
             outputPath: output_path,
             flatten: true,
@@ -237,18 +280,13 @@ export function registerPrompts(server: McpServer): void {
         ),
         "```",
         "",
-        `**Option B (two steps)** — Merge first, then flatten the result into a new file (the flatten output must differ from its input):`,
+        `**Option B (two steps)** — Merge first with \`pdf_merge\`, then flatten the result into a new file with \`pdf_flatten\` (the flatten output must differ from its input):`,
         "```json",
-        JSON.stringify(
-          { tool: "pdf_merge", filePaths: paths, outputPath: output_path },
-          null,
-          2,
-        ),
+        JSON.stringify({ filePaths: paths, outputPath: output_path }, null, 2),
         "```",
         "```json",
         JSON.stringify(
           {
-            tool: "pdf_flatten",
             filePath: output_path,
             outputPath: "<a different output path>",
           },

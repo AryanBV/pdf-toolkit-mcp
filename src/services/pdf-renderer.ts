@@ -72,7 +72,13 @@ function encodePng(
   // pngjs expects RGBA in `data`; PDFium's bitmap render (with REVERSE_BYTE_ORDER)
   // already produces RGBA, so the buffer can be copied in directly.
   png.data = Buffer.from(rgba.buffer, rgba.byteOffset, rgba.byteLength);
-  return new Uint8Array(PNG.sync.write(png));
+  // Emit RGB (colorType 2) from the RGBA source (inputColorType 6) to drop the
+  // constant 0xFF alpha plane — smaller files/base64. The PNG constructor ignores
+  // these options, so they must go to the writer. Valid only while rendering stays
+  // opaque (no transparent:true).
+  return new Uint8Array(
+    PNG.sync.write(png, { colorType: 2, inputColorType: 6 }),
+  );
 }
 
 function encodeJpeg(
