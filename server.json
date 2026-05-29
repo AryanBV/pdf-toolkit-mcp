@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.AryanBV/pdf-toolkit-mcp",
-  "description": "PDF manipulation server — create, merge, split, encrypt, fill forms, add QR codes. 16 tools.",
+  "description": "PDF manipulation MCP server — 22 tools: render pages to images for vision, Markdown/template→PDF, AES-256 encryption, form-preserving merge/split, fill forms, search, compare, QR codes, watermark. Zero-config, npx.",
   "repository": {
     "url": "https://github.com/AryanBV/pdf-toolkit-mcp",
     "source": "github"
   },
-  "version": "0.2.3",
+  "version": "0.3.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@aryanbv/pdf-toolkit-mcp",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       }
