@@ -1,5 +1,7 @@
 # PDF Toolkit MCP
 
+> 💼 Available for freelance MCP/AI integration work — DM [@aryansalian03](https://x.com/aryansalian03) or via [aryanbv.com](https://aryanbv.com)
+
 A write-capable PDF toolkit for any MCP client. It provides 22 tools for reading, creating, rendering, transforming, and securing PDFs. That includes rendering pages to images so vision models can read scanned documents, building PDFs from Markdown or structured data, AES-256 encryption, and merge and split operations that keep form fields intact. There are no native dependencies, so it runs locally from a single `npx` command.
 
 [![npm version](https://img.shields.io/npm/v/@aryanbv/pdf-toolkit-mcp)](https://www.npmjs.com/package/@aryanbv/pdf-toolkit-mcp)
